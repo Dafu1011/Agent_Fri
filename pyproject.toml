@@ -1,0 +1,25 @@
+[project]
+name = "agent-memory-api"
+version = "0.1.0"
+description = "FastAPI and LangGraph agent with persistent memory"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "langchain-openai",
+  "langgraph",
+  "langgraph-checkpoint-postgres",
+  "psycopg[binary,pool]",
+  "python-dotenv",
+  "pydantic-settings",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "httpx",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

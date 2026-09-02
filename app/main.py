@@ -1,0 +1,61 @@
+from pathlib import Path
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+
+from app.api.chat import router as chat_router
+from app.api.memory import router as memory_router
+from app.agent.graph import (
+    build_chat_graph,
+    build_postgres_checkpointer,
+    build_postgres_memory_repository,
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    checkpointer_context = None
+    memory_repository = None
+    try:
+        checkpointer_context, checkpointer = await build_postgres_checkpointer()
+    except Exception:
+        checkpointer = None
+
+    try:
+        memory_repository = build_postgres_memory_repository()
+        app.state.memory_repository = memory_repository
+    except Exception:
+        app.state.memory_repository = None
+
+    if checkpointer is not None or memory_repository is not None:
+        app.state.chat_graph = build_chat_graph(
+            checkpointer=checkpointer,
+            memory_repository=memory_repository,
+        )
+        app.state.persistence_status = "postgres"
+    else:
+        app.state.chat_graph = build_chat_graph()
+        app.state.persistence_status = "disabled"
+    try:
+        yield
+    finally:
+        if checkpointer_context is not None:
+            await checkpointer_context.__aexit__(None, None, None)
+
+
+app = FastAPI(lifespan=lifespan)
+app.include_router(chat_router)
+app.include_router(memory_router)
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/")
+async def root() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/hello/{name}")
+async def say_hello(name: str):
+    return {"message": f"Hello, {name}!"}
