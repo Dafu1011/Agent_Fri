@@ -13,8 +13,10 @@ def test_root_serves_landing_chat_page():
     assert 'data-testid="chat-panel"' in response.text
     assert 'fetch("/chat"' in response.text
     assert "thread_id: threadId" in response.text
-    assert "user_id: userId" in response.text
-    assert 'fetch(`/chat/${threadId}`)' in response.text
+    assert "user_id: userId" not in response.text
+    assert '"Authorization": `Bearer ${token}`' in response.text
+    assert 'fetch(`/chat/${threadId}`' in response.text
+    assert 'fetch(authMode === "login" ? "/auth/login" : "/auth/register"' in response.text
     assert "window.Motion = window.Motion || window.FramerMotion" in response.text
 
 

@@ -4,12 +4,23 @@ from app.main import app
 
 
 def test_chat_endpoint_returns_model_reply(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: True},
+        )(),
+    )
+
     async def fake_run_chat_graph(
         message: str,
         thread_id: str,
         user_id: str,
         graph=None,
         memory_repository=None,
+        knowledge_repository=None,
     ) -> str:
         assert message == "\u4f60\u597d"
         assert thread_id == "thread-1"
@@ -22,7 +33,6 @@ def test_chat_endpoint_returns_model_reply(monkeypatch):
     response = client.post(
         "/chat",
         json={
-            "user_id": "user-1",
             "thread_id": "thread-1",
             "message": "\u4f60\u597d",
         },
@@ -34,12 +44,42 @@ def test_chat_endpoint_returns_model_reply(monkeypatch):
 
 def test_chat_endpoint_rejects_missing_thread_id():
     client = TestClient(app)
-    response = client.post("/chat", json={"user_id": "user-1", "message": "hello"})
+    response = client.post("/chat", json={"message": "hello"})
 
     assert response.status_code == 422
 
 
+def test_chat_endpoint_rejects_thread_owned_by_another_user(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: False},
+        )(),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/chat",
+        json={"thread_id": "thread-2", "message": "hello"},
+    )
+
+    assert response.status_code == 404
+
+
 def test_chat_history_endpoint_returns_thread_messages(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: True},
+        )(),
+    )
+
     async def fake_get_thread_messages(graph, thread_id: str):
         assert thread_id == "thread-1"
         assert graph is app.state.chat_graph

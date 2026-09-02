@@ -41,7 +41,11 @@ async def chatbot_node(state: ChatState) -> dict[str, Any]:
     Returns:
         包含助手回复和消息的字典
     """
-    reply = await generate_reply(state["messages"], memories=state.get("memories", []))
+    reply = await generate_reply(
+        state["messages"],
+        memories=state.get("memories", []),
+        knowledge=state.get("knowledge", []),
+    )
     return {
         "messages": [{"role": "assistant", "content": reply}],
         "reply": reply,
@@ -51,6 +55,7 @@ async def chatbot_node(state: ChatState) -> dict[str, Any]:
 def build_chat_graph(
     checkpointer: Any | None = None,
     memory_repository: Any | None = None,
+    knowledge_repository: Any | None = None,
 ):
     """构建聊天图。
     
@@ -60,6 +65,7 @@ def build_chat_graph(
     Args:
         checkpointer: 可选的检查点管理器，用于持久化状态
         memory_repository: 可选的记忆库，用于搜索和保存记忆
+        knowledge_repository: 可选的知识库，用于检索RAG上下文
         
     Returns:
         编译后的LangGraph图对象
@@ -81,6 +87,18 @@ def build_chat_graph(
             limit=5,
         )
         return {"memories": memories}
+
+    async def load_knowledge_node(state: ChatState) -> dict[str, Any]:
+        """加载知识库节点。"""
+        if knowledge_repository is None:
+            return {"knowledge": []}
+        latest_user_message = state["messages"][-1]["content"]
+        knowledge = knowledge_repository.search(
+            user_id=state["user_id"],
+            query=latest_user_message,
+            limit=5,
+        )
+        return {"knowledge": knowledge}
 
     async def save_memories_node(state: ChatState) -> dict[str, Any]:
         """保存记忆节点。
@@ -106,6 +124,7 @@ def build_chat_graph(
 
     # 添加三个节点到图中
     graph.add_node("load_memories", load_memories_node)
+    graph.add_node("load_knowledge", load_knowledge_node)
     graph.add_node("chatbot", chatbot_node)
     graph.add_node("save_memories", save_memories_node)
     
@@ -113,7 +132,8 @@ def build_chat_graph(
     graph.set_entry_point("load_memories")
     
     # 连接节点的边，形成工作流
-    graph.add_edge("load_memories", "chatbot")
+    graph.add_edge("load_memories", "load_knowledge")
+    graph.add_edge("load_knowledge", "chatbot")
     graph.add_edge("chatbot", "save_memories")
     graph.add_edge("save_memories", END)
 
@@ -152,6 +172,7 @@ def create_initial_state(message: str, user_id: str, thread_id: str) -> ChatStat
         "user_id": user_id,
         "thread_id": thread_id,
         "memories": [],
+        "knowledge": [],
     }
 
 
@@ -175,6 +196,7 @@ async def run_chat_graph(
     user_id: str,
     graph: Any | None = None,
     memory_repository: Any | None = None,
+    knowledge_repository: Any | None = None,
 ) -> str:
     """执行聊天图的完整工作流。
     
@@ -187,12 +209,16 @@ async def run_chat_graph(
         user_id: 用户唯一标识符
         graph: 可选的预编译图对象。如果为None，将创建新图
         memory_repository: 可选的记忆库对象
+        knowledge_repository: 可选的知识库对象
         
     Returns:
         AI生成的回复文本
     """
     # 使用提供的图，或创建新图
-    graph = graph or build_chat_graph(memory_repository=memory_repository)
+    graph = graph or build_chat_graph(
+        memory_repository=memory_repository,
+        knowledge_repository=knowledge_repository,
+    )
     # 异步调用图并等待结果
     result = await graph.ainvoke(
         create_initial_state(message=message, user_id=user_id, thread_id=thread_id),

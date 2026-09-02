@@ -252,20 +252,12 @@
 
       function ChatPanel() {
         const greeting = { role: "assistant", text: "Mission control is online. Ask about LangGraph, voyages, or your next build." };
-        const [threadId] = useState(() => {
-          const existing = window.localStorage.getItem("agent_thread_id");
-          if (existing) return existing;
-          const created = `thread-${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-          window.localStorage.setItem("agent_thread_id", created);
-          return created;
-        });
-        const [userId] = useState(() => {
-          const existing = window.localStorage.getItem("agent_user_id");
-          if (existing) return existing;
-          const created = `user-${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-          window.localStorage.setItem("agent_user_id", created);
-          return created;
-        });
+        const [token, setToken] = useState(() => window.localStorage.getItem("agent_token") || "");
+        const [threadId, setThreadId] = useState(() => window.localStorage.getItem("agent_thread_id") || "");
+        const [authMode, setAuthMode] = useState("login");
+        const [username, setUsername] = useState("");
+        const [password, setPassword] = useState("");
+        const [displayName, setDisplayName] = useState("");
         const [messages, setMessages] = useState([]);
         const [input, setInput] = useState("");
         const [loading, setLoading] = useState(false);
@@ -273,11 +265,47 @@
         const listRef = useRef(null);
 
         useEffect(() => {
+          if (!token || threadId) return;
+          let cancelled = false;
+
+          async function createThread() {
+            try {
+              const response = await fetch("/threads", {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ title: "Default chat" }),
+              });
+              if (!response.ok) throw new Error(`Thread request failed: ${response.status}`);
+              const data = await response.json();
+              if (cancelled) return;
+              window.localStorage.setItem("agent_thread_id", data.id);
+              setThreadId(data.id);
+            } catch (err) {
+              if (!cancelled) setError("Session setup failed. Please sign in again.");
+            }
+          }
+
+          createThread();
+          return () => {
+            cancelled = true;
+          };
+        }, [token, threadId]);
+
+        useEffect(() => {
+          if (!token || !threadId) {
+            setMessages(token ? [] : [greeting]);
+            return;
+          }
           let cancelled = false;
 
           async function loadHistory() {
             try {
-              const response = await fetch(`/chat/${threadId}`);
+              const response = await fetch(`/chat/${threadId}`, {
+                headers: { "Authorization": `Bearer ${token}` },
+              });
               if (!response.ok) throw new Error(`History request failed: ${response.status}`);
               const data = await response.json();
               if (cancelled) return;
@@ -291,7 +319,7 @@
           return () => {
             cancelled = true;
           };
-        }, [threadId]);
+        }, [token, threadId]);
 
         useEffect(() => {
           if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -300,7 +328,7 @@
         async function sendMessage(event) {
           event.preventDefault();
           const text = input.trim();
-          if (!text || loading) return;
+          if (!text || loading || !token || !threadId) return;
           setInput("");
           setError("");
           setMessages((current) => [...current, { role: "user", text }]);
@@ -309,14 +337,46 @@
           try {
             const response = await fetch("/chat", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ user_id: userId, thread_id: threadId, message: text }),
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ thread_id: threadId, message: text }),
             });
             if (!response.ok) throw new Error(`Chat request failed: ${response.status}`);
             const data = await response.json();
             setMessages((current) => [...current, { role: "assistant", text: data.reply || "No reply returned." }]);
           } catch (err) {
             setError("Transmission failed. Check the FastAPI server and model gateway.");
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        async function submitAuth(event) {
+          event.preventDefault();
+          setLoading(true);
+          setError("");
+
+          try {
+            const response = await fetch(authMode === "login" ? "/auth/login" : "/auth/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                username: username.trim(),
+                password,
+                display_name: displayName.trim() || undefined,
+              }),
+            });
+            if (!response.ok) throw new Error(`Auth request failed: ${response.status}`);
+            const data = await response.json();
+            window.localStorage.setItem("agent_token", data.token);
+            window.localStorage.removeItem("agent_thread_id");
+            setToken(data.token);
+            setThreadId("");
+            setMessages([]);
+          } catch (err) {
+            setError(authMode === "login" ? "Sign in failed." : "Registration failed.");
           } finally {
             setLoading(false);
           }
@@ -342,12 +402,28 @@
               </div>
             </div>
             <div ref={listRef} className="chat-scroll flex h-[520px] flex-col gap-3 overflow-y-auto pr-1">
-              {messages.map((message, index) => (
-                <div key={`${message.role}-${index}`} className={`max-w-[86%] rounded-[1.1rem] px-4 py-3 font-body text-sm leading-snug ${message.role === "user" ? "ml-auto bg-white text-black" : "liquid-glass text-white/95"}`}>
-                  {message.text}
-                </div>
-              ))}
-              {loading && <div className="liquid-glass max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Receiving signal...</div>}
+              {!token ? (
+                <form onSubmit={submitAuth} className="liquid-glass mt-8 flex flex-col gap-3 rounded-[1.1rem] p-4">
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setAuthMode("login")} className={`rounded-full px-4 py-2 text-sm ${authMode === "login" ? "bg-white text-black" : "liquid-glass text-white"}`}>Sign in</button>
+                    <button type="button" onClick={() => setAuthMode("register")} className={`rounded-full px-4 py-2 text-sm ${authMode === "register" ? "bg-white text-black" : "liquid-glass text-white"}`}>Register</button>
+                  </div>
+                  <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                  <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Password" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                  {authMode === "register" && <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Display name" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />}
+                  <button type="submit" disabled={loading} className="rounded-full bg-white px-4 py-3 text-sm font-semibold text-black disabled:opacity-55">{authMode === "login" ? "Sign in" : "Create account"}</button>
+                </form>
+              ) : (
+                <>
+                  {messages.map((message, index) => (
+                    <div key={`${message.role}-${index}`} className={`max-w-[86%] rounded-[1.1rem] px-4 py-3 font-body text-sm leading-snug ${message.role === "user" ? "ml-auto bg-white text-black" : "liquid-glass text-white/95"}`}>
+                      {message.text}
+                    </div>
+                  ))}
+                  {!threadId && <div className="liquid-glass max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Preparing secure session...</div>}
+                  {loading && <div className="liquid-glass max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Receiving signal...</div>}
+                </>
+              )}
             </div>
             {error && <p className="mt-3 font-body text-xs text-white/80">{error}</p>}
             <form onSubmit={sendMessage} className="mt-4 flex items-center gap-2">

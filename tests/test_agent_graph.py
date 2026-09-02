@@ -26,7 +26,11 @@ def test_windows_selector_policy_helper_is_available_for_async_psycopg():
 
 @pytest.mark.anyio
 async def test_run_chat_graph_returns_reply_from_message_history(monkeypatch):
-    async def fake_generate_reply(messages: list[dict[str, str]], memories=None) -> str:
+    async def fake_generate_reply(
+        messages: list[dict[str, str]],
+        memories=None,
+        knowledge=None,
+    ) -> str:
         assert messages[-1] == {"role": "user", "content": "hello"}
         return "hi from graph"
 
@@ -54,7 +58,11 @@ async def test_run_chat_graph_loads_and_saves_long_term_memory(monkeypatch):
 
     repository = FakeMemoryRepository()
 
-    async def fake_generate_reply(messages: list[dict[str, str]], memories=None) -> str:
+    async def fake_generate_reply(
+        messages: list[dict[str, str]],
+        memories=None,
+        knowledge=None,
+    ) -> str:
         assert memories == ["我喜欢 LangGraph"]
         assert messages[-1] == {"role": "user", "content": "请记住我叫小明"}
         return "我记住了。"
@@ -70,6 +78,35 @@ async def test_run_chat_graph_loads_and_saves_long_term_memory(monkeypatch):
 
     assert reply == "我记住了。"
     assert repository.saved == [("user-1", "thread-1", "请记住我叫小明")]
+
+
+@pytest.mark.anyio
+async def test_run_chat_graph_loads_knowledge_context(monkeypatch):
+    class FakeKnowledgeRepository:
+        def search(self, user_id: str, query: str, limit: int = 5):
+            assert user_id == "user-1"
+            assert query == "怎么回答用户？"
+            return ["项目规范: 回答要简洁"]
+
+    async def fake_generate_reply(
+        messages: list[dict[str, str]],
+        memories=None,
+        knowledge=None,
+    ) -> str:
+        assert memories == []
+        assert knowledge == ["项目规范: 回答要简洁"]
+        return "按规范简洁回答。"
+
+    monkeypatch.setattr("app.agent.graph.generate_reply", fake_generate_reply)
+
+    reply = await run_chat_graph(
+        "怎么回答用户？",
+        thread_id="thread-1",
+        user_id="user-1",
+        knowledge_repository=FakeKnowledgeRepository(),
+    )
+
+    assert reply == "按规范简洁回答。"
 
 
 @pytest.mark.anyio

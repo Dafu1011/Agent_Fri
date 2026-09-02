@@ -28,3 +28,13 @@ def test_build_model_messages_includes_long_term_memories():
     assert "Known long-term memories about this user" in messages[0][1]
     assert "- 我叫小明" in messages[0][1]
     assert "- 我喜欢 LangGraph" in messages[0][1]
+
+
+def test_build_model_messages_includes_knowledge_context():
+    messages = build_model_messages(
+        [{"role": "user", "content": "项目怎么部署？"}],
+        knowledge=["部署文档: 使用 Docker Compose 启动 postgres"],
+    )
+
+    assert "Relevant knowledge base context" in messages[0][1]
+    assert "- 部署文档: 使用 Docker Compose 启动 postgres" in messages[0][1]

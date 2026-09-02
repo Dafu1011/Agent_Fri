@@ -14,3 +14,4 @@ class ChatState(TypedDict):
     user_id: str
     thread_id: str
     memories: list[str]
+    knowledge: list[str]
