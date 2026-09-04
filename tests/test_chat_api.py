@@ -21,6 +21,7 @@ def test_chat_endpoint_returns_model_reply(monkeypatch):
         graph=None,
         memory_repository=None,
         knowledge_repository=None,
+        tools=None,
     ) -> str:
         assert message == "\u4f60\u597d"
         assert thread_id == "thread-1"
@@ -39,7 +40,76 @@ def test_chat_endpoint_returns_model_reply(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"reply": "\u4f60\u597d\uff0c\u6211\u662f\u6d4b\u8bd5\u56de\u590d\u3002"}
+    assert response.json() == {
+        "reply": "\u4f60\u597d\uff0c\u6211\u662f\u6d4b\u8bd5\u56de\u590d\u3002",
+        "attachments": [],
+    }
+
+
+def test_chat_endpoint_returns_media_attachment_for_parse_request(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: True},
+        )(),
+    )
+
+    async def fake_parse_media_message(message: str):
+        assert message == "https://v.douyin.com/demo/ 解析"
+        return {
+            "reply": "已解析到抖音视频：城市夜景",
+            "attachments": [
+                {
+                    "platform": "douyin",
+                    "media_type": "video",
+                    "title": "城市夜景",
+                    "author": "摄影师",
+                    "cover": "https://example.com/cover.jpg",
+                    "video_url": "/media/preview/parse-123",
+                    "source_url": "https://example.com/video.mp4",
+                    "images": [],
+                    "source_images": [],
+                    "parse_id": "parse-123",
+                }
+            ],
+        }
+
+    async def fail_run_chat_graph(*args, **kwargs):
+        raise AssertionError("model graph should not run for direct media parse requests")
+
+    monkeypatch.setattr("app.api.chat.parse_media_message", fake_parse_media_message)
+    monkeypatch.setattr("app.api.chat.run_chat_graph", fail_run_chat_graph)
+
+    client = TestClient(app)
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "thread-1",
+            "message": "https://v.douyin.com/demo/ 解析",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply": "已解析到抖音视频：城市夜景",
+        "attachments": [
+            {
+                "platform": "douyin",
+                "media_type": "video",
+                "title": "城市夜景",
+                "author": "摄影师",
+                "cover": "https://example.com/cover.jpg",
+                "video_url": "/media/preview/parse-123",
+                "source_url": "https://example.com/video.mp4",
+                "images": [],
+                "source_images": [],
+                "parse_id": "parse-123",
+            }
+        ],
+    }
 
 
 def test_chat_endpoint_rejects_missing_thread_id():
@@ -97,7 +167,7 @@ def test_chat_history_endpoint_returns_thread_messages(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "messages": [
-            {"role": "user", "text": "第一轮"},
-            {"role": "assistant", "text": "收到第一轮"},
+            {"role": "user", "text": "第一轮", "attachments": []},
+            {"role": "assistant", "text": "收到第一轮", "attachments": []},
         ]
     }

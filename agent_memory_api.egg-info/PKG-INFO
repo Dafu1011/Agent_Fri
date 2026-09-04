@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: agent-memory-api
+Version: 0.1.0
+Summary: FastAPI and LangGraph agent with persistent memory
+Requires-Python: >=3.11
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: langchain-openai
+Requires-Dist: langgraph
+Requires-Dist: langgraph-checkpoint-postgres
+Requires-Dist: psycopg[binary,pool]
+Requires-Dist: python-dotenv
+Requires-Dist: pydantic-settings
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: httpx; extra == "dev"

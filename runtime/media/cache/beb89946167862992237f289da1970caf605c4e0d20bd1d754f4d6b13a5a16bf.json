@@ -1,0 +1,20 @@
+{
+  "url": "https://v.douyin.com/aRVXxdRvzrc/",
+  "created_at": "2026-09-04T08:29:35.726908+00:00",
+  "expires_at": "2026-09-05T08:29:35.726908+00:00",
+  "data": {
+    "platform": "douyin",
+    "type": "video",
+    "title": "好好吃饭 好好生活 好身材只是顺带的奖励\n#生活化减脂#健身",
+    "author": "Gwen.",
+    "cover": "https://p9-pc-sign.douyinpic.com/tos-cn-i-0813c000-ce/oIBTEA94x2VPrAAVDAldHCApi4av8jMo3ipIP~noop.jpeg?lk3s=138a59ce&x-expires=1789718400&x-signature=RqOn3FvO7f%2BxOWOkPdYA9osx2zk%3D&from=327834062&s=PackSourceEnum_AWEME_DETAIL&se=false&biz_tag=pcweb_cover&l=202609041629360736462A6E93CBFA9A19",
+    "video_url": "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/7651996663355493158.mp3",
+    "images": [],
+    "duration": 0,
+    "create_time": "2026-08-31T12:46:16Z",
+    "download_url": "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/7651996663355493158.mp3",
+    "raw": {
+      "source": "douyin"
+    }
+  }
+}

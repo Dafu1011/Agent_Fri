@@ -12,12 +12,17 @@ dependencies = [
   "psycopg[binary,pool]",
   "python-dotenv",
   "pydantic-settings",
+  "httpx",
+  "imageio-ffmpeg",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest",
-  "httpx",
+]
+tools = [
+  "langchain-mcp-adapters",
+  "mcp",
 ]
 
 [tool.pytest.ini_options]
