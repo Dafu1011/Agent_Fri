@@ -9,6 +9,7 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.knowledge import router as knowledge_router
 from app.api.memory import router as memory_router
+from app.media_downloader.api.media_router import router as media_router
 from app.agent.graph import (
     build_chat_graph,
     build_postgres_checkpointer,
@@ -102,6 +103,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(knowledge_router)
 app.include_router(memory_router)
+app.include_router(media_router)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

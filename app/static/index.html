@@ -196,6 +196,106 @@
         return <div className="message-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
       }
 
+      function MediaVideo({ attachment }) {
+        const [failed, setFailed] = useState(false);
+        return (
+          <div>
+            <video controls src={attachment.video_url} poster={attachment.cover || undefined} className="max-h-[360px] w-full bg-black object-contain" preload="metadata" playsInline onError={() => setFailed(true)} />
+            {failed && (
+              <div className="px-3 py-2 text-xs text-white/70">
+                <p>视频预览加载失败。</p>
+                {attachment.source_url && (
+                  <a href={attachment.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block underline underline-offset-2">
+                    打开原始视频
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function PhotoStack({ images, title, sourceImages }) {
+        const [index, setIndex] = useState(0);
+        const [dragX, setDragX] = useState(0);
+        const dragStartRef = useRef({ x: 0, time: 0 });
+        const count = images.length;
+        const visibleCards = Array.from({ length: Math.min(3, images.length) }, (_, layer) => {
+          const imageIndex = (index + layer) % count;
+          return { src: images[imageIndex], imageIndex, layer };
+        });
+
+        if (!count) return null;
+
+        function clamp(value, min, max) {
+          return Math.min(Math.max(value, min), max);
+        }
+
+        function finishDrag() {
+          const elapsed = Math.max(performance.now() - dragStartRef.current.time, 1);
+          const dragVelocity = dragX / elapsed;
+          const shouldFlip = Math.abs(dragX) > 72 || Math.abs(dragVelocity) > 0.5;
+          if (shouldFlip && count > 1) {
+            setIndex((current) => (current + (dragX < 0 ? 1 : count - 1)) % count);
+          }
+          setDragX(0);
+        }
+
+        return (
+          <div className="relative mx-auto h-[380px] w-full max-w-[330px] touch-pan-y select-none py-4" onPointerDown={(event) => {
+            dragStartRef.current = { x: event.clientX, time: performance.now() };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }} onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            setDragX(clamp(event.clientX - dragStartRef.current.x, -150, 150));
+          }} onPointerUp={finishDrag} onPointerCancel={() => setDragX(0)}>
+            {visibleCards.slice().reverse().map(({ src, imageIndex, layer }) => {
+              const isTop = layer === 0;
+              const peakOffset = isTop ? -Math.abs(dragX) * 0.18 : 0;
+              const x = isTop ? dragX : layer * 14;
+              const y = layer * 20 + peakOffset;
+              const rotate = isTop ? dragX / 18 : layer === 1 ? -4 : 5;
+              const scale = 1 - layer * 0.055;
+              return (
+                <a key={`${src}-${layer}`} href={(sourceImages || [])[imageIndex] || src} target="_blank" rel="noreferrer" className="absolute inset-x-3 top-4 block overflow-hidden rounded-[1rem] bg-black shadow-[0_18px_40px_rgba(0,0,0,.35)] transition-transform duration-200 ease-out" style={{ transform: `translate(${x}px, ${y}px) rotate(${rotate}deg) scale(${scale})`, zIndex: 3 - layer }}>
+                  <img src={src} alt={title || "Parsed media"} className="h-[320px] w-full object-cover" loading={layer === 0 ? "eager" : "lazy"} draggable="false" />
+                </a>
+              );
+            })}
+            {count > 1 && (
+              <div className="absolute bottom-0 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/45 px-3 py-1 text-xs text-white/75">
+                {index + 1}/{count}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function MediaAttachments({ attachments }) {
+        const items = attachments || [];
+        if (!items.length) return null;
+        return (
+          <div className="mt-3 flex flex-col gap-3">
+            {items.map((attachment, attachmentIndex) => (
+              <div key={`${attachment.platform}-${attachment.parse_id || attachmentIndex}`} className="overflow-hidden rounded-[0.9rem] bg-black/25">
+                {attachment.media_type === "video" && attachment.video_url && (
+                  <MediaVideo attachment={attachment} />
+                )}
+                {attachment.media_type === "image_gallery" && (
+                  <PhotoStack images={attachment.images} title={attachment.title} sourceImages={attachment.source_images} />
+                )}
+                {(attachment.title || attachment.author) && (
+                  <div className="px-3 py-2 text-xs text-white/70">
+                    {attachment.title && <p className="line-clamp-2">{attachment.title}</p>}
+                    {attachment.author && <p className="mt-1 text-white/45">{attachment.author}</p>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      }
+
       function FadingVideo({ src, className, style }) {
         const videoRef = useRef(null);
         const rafRef = useRef(null);
@@ -398,7 +498,14 @@
             });
             if (!response.ok) throw new Error(`Chat request failed: ${response.status}`);
             const data = await response.json();
-            setMessages((current) => [...current, { role: "assistant", text: data.reply || "No reply returned." }]);
+            setMessages((current) => [
+              ...current,
+              {
+                role: "assistant",
+                text: data.reply || "No reply returned.",
+                attachments: data.attachments || [],
+              },
+            ]);
           } catch (err) {
             setError("Transmission failed. Check the FastAPI server and model gateway.");
           } finally {
@@ -471,6 +578,7 @@
                   {messages.map((message, index) => (
                     <div key={`${message.role}-${index}`} className={`shrink-0 max-w-[86%] rounded-[1.1rem] px-4 py-3 font-body text-sm leading-snug ${message.role === "user" ? "ml-auto bg-white text-black" : "liquid-glass text-white/95"}`}>
                       <MessageContent text={message.text} />
+                      <MediaAttachments attachments={message.attachments} />
                     </div>
                   ))}
                   {!threadId && <div className="liquid-glass shrink-0 max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Preparing secure session...</div>}

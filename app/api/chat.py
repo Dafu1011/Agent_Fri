@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.agent.graph import get_thread_messages, run_chat_graph
 from app.api.auth import get_auth_repository, get_current_user_id
+from app.media_downloader.chat import parse_media_message
 from app.schemas.chat import ChatHistoryResponse, ChatRequest, ChatResponse
 
 
@@ -15,9 +16,14 @@ async def chat(request: ChatRequest, fastapi_request: Request) -> ChatResponse:
     if not auth_repository.thread_belongs_to_user(request.thread_id, user_id):
         raise HTTPException(status_code=404, detail="Thread not found")
 
+    media_response = await parse_media_message(request.message)
+    if media_response is not None:
+        return ChatResponse(**media_response)
+
     graph = getattr(fastapi_request.app.state, "chat_graph", None)
     memory_repository = getattr(fastapi_request.app.state, "memory_repository", None)
     knowledge_repository = getattr(fastapi_request.app.state, "knowledge_repository", None)
+    tools = getattr(fastapi_request.app.state, "agent_tools", None)
     reply = await run_chat_graph(
         request.message,
         thread_id=request.thread_id,
@@ -25,6 +31,7 @@ async def chat(request: ChatRequest, fastapi_request: Request) -> ChatResponse:
         graph=graph,
         memory_repository=memory_repository,
         knowledge_repository=knowledge_repository,
+        tools=tools,
     )
     return ChatResponse(reply=reply)
 

@@ -13,6 +13,7 @@ dependencies = [
   "python-dotenv",
   "pydantic-settings",
   "httpx",
+  "imageio-ffmpeg",
 ]
 
 [project.optional-dependencies]

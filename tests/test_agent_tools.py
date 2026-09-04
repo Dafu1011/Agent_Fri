@@ -13,7 +13,10 @@ from app.agent.tools.web import build_web_tools, get_open_meteo_weather
 def test_build_builtin_tools_includes_weather_without_optional_configuration(monkeypatch):
     monkeypatch.setattr("app.agent.tools.web.settings.searxng_base_url", "")
 
-    assert [tool.name for tool in build_builtin_tools()] == ["get_current_weather"]
+    assert [tool.name for tool in build_builtin_tools()] == [
+        "get_current_weather",
+        "parse_social_media_link",
+    ]
 
 
 def test_build_tools_includes_injected_tools_after_builtin_tools(monkeypatch):
@@ -24,7 +27,8 @@ def test_build_tools_includes_injected_tools_after_builtin_tools(monkeypatch):
     tools = build_tools(extra_tools=[first_tool, second_tool])
 
     assert tools[0].name == "get_current_weather"
-    assert tools[1:] == [first_tool, second_tool]
+    assert tools[1].name == "parse_social_media_link"
+    assert tools[2:] == [first_tool, second_tool]
 
 
 def test_build_web_tools_returns_empty_without_searxng_base_url(monkeypatch):
