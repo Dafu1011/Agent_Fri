@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql://agent:agent@localhost:5432/agent_memory"
+    database_url: str = "postgresql://agent:agent@localhost:55432/agent_memory"
 
     openai_api_key: str = ""
     openai_base_url: str | None = None

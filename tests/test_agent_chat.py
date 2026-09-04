@@ -1,5 +1,5 @@
 from app.agent.chat import build_model_messages
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 
 def test_build_model_messages_keeps_history_and_adds_system_message():
@@ -39,6 +39,62 @@ def test_build_model_messages_accepts_langchain_messages():
     assert messages[1:] == [
         HumanMessage(content="hello"),
         AIMessage(content="hi"),
+    ]
+
+
+def test_build_model_messages_drops_incomplete_tool_call_history():
+    messages = build_model_messages(
+        [
+            HumanMessage(content="解析这个链接"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "parse_social_media_link",
+                        "args": {"url": "https://v.douyin.com/example"},
+                        "id": "call-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            HumanMessage(content="再试一次"),
+        ]
+    )
+
+    assert messages[1:] == [
+        HumanMessage(content="解析这个链接"),
+        HumanMessage(content="再试一次"),
+    ]
+
+
+def test_build_model_messages_preserves_complete_tool_call_history():
+    assistant_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "parse_social_media_link",
+                "args": {"url": "https://v.douyin.com/example"},
+                "id": "call-1",
+                "type": "tool_call",
+            }
+        ],
+    )
+    tool_message = ToolMessage(content="解析成功", tool_call_id="call-1")
+
+    messages = build_model_messages(
+        [
+            HumanMessage(content="解析这个链接"),
+            assistant_message,
+            tool_message,
+            AIMessage(content="已解析成功"),
+        ]
+    )
+
+    assert messages[1:] == [
+        HumanMessage(content="解析这个链接"),
+        assistant_message,
+        tool_message,
+        AIMessage(content="已解析成功"),
     ]
 
 

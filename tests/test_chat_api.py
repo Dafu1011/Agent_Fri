@@ -119,6 +119,36 @@ def test_chat_endpoint_rejects_missing_thread_id():
     assert response.status_code == 422
 
 
+def test_chat_endpoint_returns_clear_error_when_model_is_not_configured(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: True},
+        )(),
+    )
+    async def fake_parse_media_message(message: str):
+        return None
+
+    monkeypatch.setattr("app.api.chat.parse_media_message", fake_parse_media_message)
+
+    async def fake_run_chat_graph(*args, **kwargs):
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    monkeypatch.setattr("app.api.chat.run_chat_graph", fake_run_chat_graph)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/chat",
+        json={"thread_id": "thread-1", "message": "hello"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "模型服务未配置：请设置 OPENAI_API_KEY 后重启服务。"}
+
+
 def test_chat_endpoint_rejects_thread_owned_by_another_user(monkeypatch):
     monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
     monkeypatch.setattr(

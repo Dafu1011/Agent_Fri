@@ -1,6 +1,12 @@
 from typing import Any, Sequence
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from app.agent.state import ChatMessage
 from app.config import settings
@@ -12,6 +18,50 @@ def _to_langchain_message(message: ChatMessage | BaseMessage) -> BaseMessage:
     if message["role"] == "user":
         return HumanMessage(content=message["content"])
     return AIMessage(content=message["content"])
+
+
+def _tool_call_ids(message: AIMessage) -> set[str]:
+    return {
+        str(tool_call["id"])
+        for tool_call in (message.tool_calls or [])
+        if tool_call.get("id")
+    }
+
+
+def _sanitize_tool_call_history(messages: list[BaseMessage]) -> list[BaseMessage]:
+    sanitized: list[BaseMessage] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+
+        if isinstance(message, ToolMessage):
+            index += 1
+            continue
+
+        if not isinstance(message, AIMessage) or not message.tool_calls:
+            sanitized.append(message)
+            index += 1
+            continue
+
+        expected_tool_call_ids = _tool_call_ids(message)
+        tool_messages: list[ToolMessage] = []
+        scan_index = index + 1
+        while scan_index < len(messages) and isinstance(messages[scan_index], ToolMessage):
+            tool_messages.append(messages[scan_index])
+            scan_index += 1
+
+        returned_tool_call_ids = {
+            str(tool_message.tool_call_id)
+            for tool_message in tool_messages
+            if tool_message.tool_call_id
+        }
+        if expected_tool_call_ids and expected_tool_call_ids <= returned_tool_call_ids:
+            sanitized.append(message)
+            sanitized.extend(tool_messages)
+
+        index = scan_index
+
+    return sanitized
 
 
 def build_model_messages(
@@ -45,9 +95,9 @@ def build_model_messages(
             "Use this retrieved context when it is relevant. If it conflicts with "
             "the user's private memories, do not merge the two sources silently."
         )
-    return [SystemMessage(content=system_prompt)] + [
-        _to_langchain_message(message) for message in messages
-    ]
+    history = [_to_langchain_message(message) for message in messages]
+    return [SystemMessage(content=system_prompt)] + _sanitize_tool_call_history(history)
+
 
 
 async def generate_reply(

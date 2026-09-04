@@ -24,15 +24,23 @@ async def chat(request: ChatRequest, fastapi_request: Request) -> ChatResponse:
     memory_repository = getattr(fastapi_request.app.state, "memory_repository", None)
     knowledge_repository = getattr(fastapi_request.app.state, "knowledge_repository", None)
     tools = getattr(fastapi_request.app.state, "agent_tools", None)
-    reply = await run_chat_graph(
-        request.message,
-        thread_id=request.thread_id,
-        user_id=user_id,
-        graph=graph,
-        memory_repository=memory_repository,
-        knowledge_repository=knowledge_repository,
-        tools=tools,
-    )
+    try:
+        reply = await run_chat_graph(
+            request.message,
+            thread_id=request.thread_id,
+            user_id=user_id,
+            graph=graph,
+            memory_repository=memory_repository,
+            knowledge_repository=knowledge_repository,
+            tools=tools,
+        )
+    except RuntimeError as exc:
+        if "OPENAI_API_KEY is not configured" in str(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="模型服务未配置：请设置 OPENAI_API_KEY 后重启服务。",
+            ) from exc
+        raise
     return ChatResponse(reply=reply)
 
 

@@ -10,8 +10,16 @@ def configure_event_loop_policy() -> None:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
-def selector_loop_factory():
-    return asyncio.SelectorEventLoop()
+def _serve_with_selector_loop(server: uvicorn.Server) -> None:
+    loop = asyncio.SelectorEventLoop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(server.serve())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def run(
@@ -22,13 +30,23 @@ def run(
     reload: bool = False,
 ) -> None:
     configure_event_loop_policy()
+    if sys.platform == "win32" and not reload:
+        config = uvicorn.Config(
+            "app.main:app",
+            host=host,
+            port=port,
+            log_level=log_level,
+            reload=reload,
+        )
+        _serve_with_selector_loop(uvicorn.Server(config))
+        return
+
     uvicorn.run(
         "app.main:app",
         host=host,
         port=port,
         log_level=log_level,
         reload=reload,
-        loop=selector_loop_factory,
     )
 
 

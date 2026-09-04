@@ -30,3 +30,11 @@ def test_env_example_points_agent_to_local_searxng():
 
     assert "WEB_SEARCH_PROVIDER=searxng" in env_example
     assert "SEARXNG_BASE_URL=http://localhost:8080" in env_example
+
+
+def test_env_example_points_agent_to_docker_postgres_host_port():
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert '"55432:5432"' in compose
+    assert "DATABASE_URL=postgresql://agent:agent@localhost:55432/agent_memory" in env_example

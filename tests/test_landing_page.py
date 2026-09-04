@@ -56,6 +56,16 @@ def test_chat_messages_render_markdown_safely_and_scroll_responsively():
     assert "prefers-reduced-motion: reduce" in response.text
 
 
+def test_chat_request_errors_display_backend_detail():
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert "async function readErrorMessage(response)" in response.text
+    assert "data.detail || data.error || `Chat request failed: ${response.status}`" in response.text
+    assert "setError(message)" in response.text
+    assert "Transmission failed. Check the FastAPI server and model gateway." not in response.text
+
+
 def test_chat_messages_render_media_attachments():
     client = TestClient(app)
     response = client.get("/")
@@ -83,4 +93,11 @@ def test_image_gallery_uses_stacked_cards_interaction():
     assert "onPointerUp" in response.text
     assert "dragVelocity" in response.text
     assert "peakOffset" in response.text
+    assert "dragProgress" in response.text
+    assert "isDragging" in response.text
+    assert "interpolateCardPose" in response.text
+    assert "stackDirection" in response.text
+    assert "transitionClass" in response.text
+    assert "openImageLink" in response.text
+    assert "<a key={`${src}-${layer}`}" not in response.text
     assert "<PhotoStack images={attachment.images} title={attachment.title} sourceImages={attachment.source_images} />" in response.text
