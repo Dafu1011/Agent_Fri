@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+langchain-openai
+langgraph
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
+python-dotenv
+pydantic-settings
+
+[dev]
+pytest
+httpx
