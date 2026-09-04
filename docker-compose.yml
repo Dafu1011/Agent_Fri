@@ -7,3 +7,20 @@ services:
       POSTGRES_DB: agent_memory
     ports:
       - "55432:5432"
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SEARXNG_BASE_URL: "http://localhost:8080/"
+      SEARXNG_SECRET: "local-development-secret-change-me"
+      SEARXNG_LIMITER: "false"
+      SEARXNG_PUBLIC_INSTANCE: "false"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-cache:/var/cache/searxng
+
+volumes:
+  searxng-cache:

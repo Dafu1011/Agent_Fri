@@ -10,9 +10,11 @@
 from functools import lru_cache
 from typing import Any
 
+from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import END, StateGraph
+from langgraph.prebuilt import ToolNode
 
-from app.agent.chat import generate_reply
+from app.agent.chat import generate_model_message, generate_reply
 from app.agent.memory import PostgresMemoryRepository
 from app.agent.state import ChatState
 from app.config import settings
@@ -28,6 +30,31 @@ def ensure_async_postgres_event_loop_policy() -> None:
 
 
 ensure_async_postgres_event_loop_policy()
+
+
+def _message_content(message: Any) -> str:
+    if isinstance(message, BaseMessage):
+        content = message.content
+        return content if isinstance(content, str) else str(content)
+    return str(message["content"])
+
+
+def _message_role(message: Any) -> str:
+    if isinstance(message, BaseMessage):
+        if message.type == "human":
+            return "user"
+        if message.type == "ai":
+            return "assistant"
+        return message.type
+    return str(message["role"])
+
+
+def _latest_user_message_content(messages: list[Any]) -> str:
+    return next(
+        _message_content(message)
+        for message in reversed(messages)
+        if _message_role(message) == "user"
+    )
 
 
 async def chatbot_node(state: ChatState) -> dict[str, Any]:
@@ -56,6 +83,7 @@ def build_chat_graph(
     checkpointer: Any | None = None,
     memory_repository: Any | None = None,
     knowledge_repository: Any | None = None,
+    tools: list[Any] | None = None,
 ):
     """构建聊天图。
     
@@ -80,7 +108,7 @@ def build_chat_graph(
         """
         if memory_repository is None:
             return {"memories": []}
-        latest_user_message = state["messages"][-1]["content"]
+        latest_user_message = _latest_user_message_content(state["messages"])
         memories = memory_repository.search_memories(
             user_id=state["user_id"],
             query=latest_user_message,
@@ -92,7 +120,7 @@ def build_chat_graph(
         """加载知识库节点。"""
         if knowledge_repository is None:
             return {"knowledge": []}
-        latest_user_message = state["messages"][-1]["content"]
+        latest_user_message = _latest_user_message_content(state["messages"])
         knowledge = knowledge_repository.search(
             user_id=state["user_id"],
             query=latest_user_message,
@@ -108,12 +136,7 @@ def build_chat_graph(
         """
         if memory_repository is None:
             return {}
-        # 找到最后一条用户消息
-        latest_user_message = next(
-            message["content"]
-            for message in reversed(state["messages"])
-            if message["role"] == "user"
-        )
+        latest_user_message = _latest_user_message_content(state["messages"])
         # 保存消息内容到记忆库
         memory_repository.save_from_message(
             user_id=state["user_id"],
@@ -122,11 +145,33 @@ def build_chat_graph(
         )
         return {}
 
+    tool_list = tools or []
+
+    async def assistant_with_tools_node(state: ChatState) -> dict[str, Any]:
+        response = await generate_model_message(
+            state["messages"],
+            memories=state.get("memories", []),
+            knowledge=state.get("knowledge", []),
+            tools=tool_list,
+        )
+        return {
+            "messages": [response],
+            "reply": str(response.content),
+        }
+
+    def route_after_assistant(state: ChatState) -> str:
+        last_message = state["messages"][-1]
+        if getattr(last_message, "tool_calls", None):
+            return "tools"
+        return "save_memories"
+
     # 添加三个节点到图中
     graph.add_node("load_memories", load_memories_node)
     graph.add_node("load_knowledge", load_knowledge_node)
-    graph.add_node("chatbot", chatbot_node)
+    graph.add_node("chatbot", assistant_with_tools_node if tool_list else chatbot_node)
     graph.add_node("save_memories", save_memories_node)
+    if tool_list:
+        graph.add_node("tools", ToolNode(tool_list))
     
     # 设置图的入口点
     graph.set_entry_point("load_memories")
@@ -134,7 +179,18 @@ def build_chat_graph(
     # 连接节点的边，形成工作流
     graph.add_edge("load_memories", "load_knowledge")
     graph.add_edge("load_knowledge", "chatbot")
-    graph.add_edge("chatbot", "save_memories")
+    if tool_list:
+        graph.add_conditional_edges(
+            "chatbot",
+            route_after_assistant,
+            {
+                "tools": "tools",
+                "save_memories": "save_memories",
+            },
+        )
+        graph.add_edge("tools", "chatbot")
+    else:
+        graph.add_edge("chatbot", "save_memories")
     graph.add_edge("save_memories", END)
 
     # 编译图，可选地添加检查点用于状态持久化
@@ -167,7 +223,7 @@ def create_initial_state(message: str, user_id: str, thread_id: str) -> ChatStat
         初始化的ChatState字典
     """
     return {
-        "messages": [{"role": "user", "content": message}],
+        "messages": [HumanMessage(content=message)],
         "reply": "",
         "user_id": user_id,
         "thread_id": thread_id,
@@ -197,6 +253,7 @@ async def run_chat_graph(
     graph: Any | None = None,
     memory_repository: Any | None = None,
     knowledge_repository: Any | None = None,
+    tools: list[Any] | None = None,
 ) -> str:
     """执行聊天图的完整工作流。
     
@@ -218,6 +275,7 @@ async def run_chat_graph(
     graph = graph or build_chat_graph(
         memory_repository=memory_repository,
         knowledge_repository=knowledge_repository,
+        tools=tools,
     )
     # 异步调用图并等待结果
     result = await graph.ainvoke(
@@ -232,13 +290,18 @@ async def get_thread_messages(graph: Any | None, thread_id: str) -> list[dict[st
     if graph is None:
         return []
 
-    state = await graph.aget_state(create_thread_config(thread_id))
+    try:
+        state = await graph.aget_state(create_thread_config(thread_id))
+    except ValueError as exc:
+        if "No checkpointer set" in str(exc):
+            return []
+        raise
     values = getattr(state, "values", {}) or {}
     messages = values.get("messages", [])
     return [
-        {"role": message["role"], "content": message["content"]}
+        {"role": _message_role(message), "content": _message_content(message)}
         for message in messages
-        if message.get("role") in {"user", "assistant"} and "content" in message
+        if _message_role(message) in {"user", "assistant"}
     ]
 
 

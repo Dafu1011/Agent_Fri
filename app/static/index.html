@@ -29,6 +29,8 @@
     <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/framer-motion@11.11.17/dist/framer-motion.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
     <script>window.Motion = window.Motion || window.FramerMotion;</script>
     <style>
       html { scroll-behavior: smooth; }
@@ -88,8 +90,72 @@
         mask-composite: exclude;
         pointer-events: none;
       }
+      .chat-scroll { scrollbar-gutter: stable; overscroll-behavior: contain; }
       .chat-scroll::-webkit-scrollbar { width: 6px; }
       .chat-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.24); border-radius: 9999px; }
+      .message-markdown {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .message-markdown p {
+        margin: 0 0 0.6rem;
+      }
+      .message-markdown p:last-child {
+        margin-bottom: 0;
+      }
+      .message-markdown ul,
+      .message-markdown ol {
+        margin: 0.5rem 0;
+        padding-left: 1.25rem;
+      }
+      .message-markdown ul {
+        list-style: disc;
+      }
+      .message-markdown ol {
+        list-style: decimal;
+      }
+      .message-markdown li {
+        margin: 0.25rem 0;
+      }
+      .message-markdown strong {
+        font-weight: 700;
+      }
+      .message-markdown em {
+        font-style: italic;
+      }
+      .message-markdown code {
+        border-radius: 0.35rem;
+        background: rgba(255,255,255,0.14);
+        padding: 0.1rem 0.3rem;
+        font-size: 0.92em;
+      }
+      .message-markdown pre {
+        margin: 0.6rem 0;
+        max-width: 100%;
+        overflow-x: auto;
+        border-radius: 0.75rem;
+        background: rgba(0,0,0,0.28);
+        padding: 0.75rem;
+      }
+      .message-markdown pre code {
+        background: transparent;
+        padding: 0;
+      }
+      .message-markdown a {
+        color: inherit;
+        text-decoration: underline;
+        text-underline-offset: 0.18em;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
     </style>
   </head>
   <body>
@@ -121,6 +187,13 @@
             <path d={path} />
           </svg>
         );
+      }
+
+      marked.setOptions({ breaks: true, gfm: true });
+
+      function MessageContent({ text }) {
+        const html = DOMPurify.sanitize(marked.parse(text || ""));
+        return <div className="message-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
       }
 
       function FadingVideo({ src, className, style }) {
@@ -227,26 +300,6 @@
               </motion.span>
             ))}
           </p>
-        );
-      }
-
-      function Navbar() {
-        const links = ["Home", "Voyages", "Worlds", "Innovation", "Plan Launch"];
-        return (
-          <nav className="fixed top-4 left-0 right-0 z-50 px-8 lg:px-16">
-            <div className="mx-auto flex max-w-7xl items-center justify-between">
-              <div className="liquid-glass flex h-12 w-12 items-center justify-center rounded-full font-heading text-3xl italic text-white">a</div>
-              <div className="liquid-glass hidden items-center gap-1 rounded-full px-1.5 py-1.5 md:flex">
-                {links.map((link) => (
-                  <a key={link} href={link === "Home" ? "#hero" : "#capabilities"} className="px-3 py-2 font-body text-sm font-medium text-white/90">{link}</a>
-                ))}
-                <a href="#chat" className="flex items-center gap-2 rounded-full bg-white px-4 py-2 font-body text-sm font-semibold whitespace-nowrap text-black">
-                  Claim a Spot <ArrowUpRight className="h-4 w-4" />
-                </a>
-              </div>
-              <div className="h-12 w-12" aria-hidden="true"></div>
-            </div>
-          </nav>
         );
       }
 
@@ -390,9 +443,9 @@
             whileInView={{ filter: "blur(0px)", opacity: 1, y: 0 }}
             viewport={{ once: true, amount: 0.2 }}
             transition={{ duration: 0.75, ease: "easeOut", delay: 0.2 }}
-            className="liquid-glass-strong w-full max-w-[630px] rounded-[1.5rem] p-4 text-left"
+            className="liquid-glass-strong flex h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-[630px] flex-col rounded-[1.5rem] p-4 text-left"
           >
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex shrink-0 items-center justify-between">
               <div>
                 <p className="font-body text-xs font-medium uppercase tracking-[0.18em] text-white/60">AI Mission Console</p>
                 <h2 className="font-heading text-3xl italic leading-[1.1] text-white">Ask the agent</h2>
@@ -401,7 +454,7 @@
                 <ArrowUpRight className="h-5 w-5" />
               </div>
             </div>
-            <div ref={listRef} className="chat-scroll flex h-[520px] flex-col gap-3 overflow-y-auto pr-1">
+            <div ref={listRef} className="chat-scroll flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto pr-1">
               {!token ? (
                 <form onSubmit={submitAuth} className="liquid-glass mt-8 flex flex-col gap-3 rounded-[1.1rem] p-4">
                   <div className="flex gap-2">
@@ -416,17 +469,17 @@
               ) : (
                 <>
                   {messages.map((message, index) => (
-                    <div key={`${message.role}-${index}`} className={`max-w-[86%] rounded-[1.1rem] px-4 py-3 font-body text-sm leading-snug ${message.role === "user" ? "ml-auto bg-white text-black" : "liquid-glass text-white/95"}`}>
-                      {message.text}
+                    <div key={`${message.role}-${index}`} className={`shrink-0 max-w-[86%] rounded-[1.1rem] px-4 py-3 font-body text-sm leading-snug ${message.role === "user" ? "ml-auto bg-white text-black" : "liquid-glass text-white/95"}`}>
+                      <MessageContent text={message.text} />
                     </div>
                   ))}
-                  {!threadId && <div className="liquid-glass max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Preparing secure session...</div>}
-                  {loading && <div className="liquid-glass max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Receiving signal...</div>}
+                  {!threadId && <div className="liquid-glass shrink-0 max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Preparing secure session...</div>}
+                  {loading && <div className="liquid-glass shrink-0 max-w-[72%] rounded-[1.1rem] px-4 py-3 font-body text-sm text-white/80">Receiving signal...</div>}
                 </>
               )}
             </div>
             {error && <p className="mt-3 font-body text-xs text-white/80">{error}</p>}
-            <form onSubmit={sendMessage} className="mt-4 flex items-center gap-2">
+            <form onSubmit={sendMessage} className="mt-4 flex shrink-0 items-center gap-2">
               <input
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
@@ -450,93 +503,10 @@
               style={{ width: "120%", height: "120%" }}
             />
             <div className="relative z-10 flex min-h-[100dvh] w-full flex-col">
-              <Navbar />
-              <div className="hero-chat-center flex flex-1 items-center justify-center px-4 pt-24">
+              <div className="hero-chat-center flex flex-1 items-center justify-center px-4 py-4">
                 <div className="flex w-full max-w-[690px] justify-center">
                   <ChatPanel />
                 </div>
-              </div>
-            </div>
-          </section>
-        );
-      }
-
-      function StatCard({ number, label, icon }) {
-        return (
-          <div className="liquid-glass w-[220px] rounded-[1.25rem] p-5">
-            <div className="mb-5 h-7 w-7 text-white">
-              {icon === "clock" ? (
-                <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
-              ) : (
-                <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.6-3.6-9S9.6 5.6 12 3Z" /></svg>
-              )}
-            </div>
-            <p className="font-heading text-4xl italic leading-none tracking-[-1px] text-white">{number}</p>
-            <p className="mt-2 font-body text-xs font-light text-white">{label}</p>
-          </div>
-        );
-      }
-
-      function Capabilities() {
-        const cards = [
-          {
-            title: "AI Scenery",
-            body: "AI analyzes your product to create indistinguishable natural environments, from Icelandic cliffs to misty forests.",
-            icon: "M5 21q-.825 0-1.412-.587T3 19V5q0-.825.588-1.412T5 3h14q.825 0 1.413.588T21 5v14q0 .825-.587 1.413T19 21H5Zm1-4h12l-3.75-5-3 4L9 13l-3 4Z",
-            tags: ["Natural Context", "Photo Realism", "Infinite Settings", "Eco-Vibe"],
-          },
-          {
-            title: "Batch Production",
-            body: "Style your entire product line in minutes. Create a unified visual identity for catalogues and social media without weeks of retouching.",
-            icon: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.89-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4Z",
-            tags: ["Scale Fast", "Visual Consistency", "Time Saver", "Ready to Post"],
-          },
-          {
-            title: "Smart Lighting",
-            body: "Automatic lighting and material adjustment. Achieve flawless integration with realistic shadows and sunlight.",
-            icon: "M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1Zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7Z",
-            tags: ["Ray Tracing", "Physical Shadows", "Studio Quality", "Sunlight Sync"],
-          },
-        ];
-
-        return (
-          <section id="capabilities" className="relative min-h-[100dvh] overflow-hidden bg-black">
-            <FadingVideo
-              src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_094631_d30ab262-45ee-4b7d-99f3-5d5848c8ef13.mp4"
-              className="absolute inset-0 z-0 h-full w-full object-cover"
-            />
-            <div className="relative z-10 flex min-h-[100dvh] flex-col px-8 pb-10 pt-24 md:px-16 lg:px-20">
-              <motion.header initial={{ filter: "blur(10px)", opacity: 0, y: 20 }} whileInView={{ filter: "blur(0px)", opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.25 }} transition={{ duration: 0.7, ease: "easeOut" }} className="mb-auto">
-                <p className="mb-6 font-body text-sm text-white/80">// Capabilities</p>
-                <h2 className="pb-1 font-heading text-6xl italic leading-[0.96] tracking-[-3px] text-white md:text-7xl lg:text-[6rem]">
-                  Production<br />evolved
-                </h2>
-              </motion.header>
-              <div className="mt-16 grid grid-cols-1 gap-6 md:grid-cols-3">
-                {cards.map((card, index) => (
-                  <motion.article
-                    key={card.title}
-                    initial={{ filter: "blur(10px)", opacity: 0, y: 20 }}
-                    whileInView={{ filter: "blur(0px)", opacity: 1, y: 0 }}
-                    viewport={{ once: true, amount: 0.2 }}
-                    transition={{ duration: 0.7, ease: "easeOut", delay: index * 0.12 }}
-                    className="liquid-glass flex min-h-[360px] flex-col rounded-[1.25rem] p-6"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="liquid-glass flex h-11 w-11 shrink-0 items-center justify-center rounded-[0.75rem]">
-                        <MaterialIcon path={card.icon} />
-                      </div>
-                      <div className="flex max-w-[70%] flex-wrap justify-end gap-1.5">
-                        {card.tags.map((tag) => <span key={tag} className="liquid-glass rounded-full px-3 py-1 font-body text-[11px] text-white/90 whitespace-nowrap">{tag}</span>)}
-                      </div>
-                    </div>
-                    <div className="flex-1"></div>
-                    <div className="mt-6">
-                      <h3 className="font-heading text-3xl italic leading-none tracking-[-1px] text-white md:text-4xl">{card.title}</h3>
-                      <p className="mt-3 max-w-[32ch] font-body text-sm font-light leading-snug text-white/90">{card.body}</p>
-                    </div>
-                  </motion.article>
-                ))}
               </div>
             </div>
           </section>
@@ -547,7 +517,6 @@
         return (
           <main>
             <Hero />
-            <Capabilities />
           </main>
         );
       }
