@@ -630,9 +630,21 @@
         const [token, setToken] = useState(() => window.localStorage.getItem("agent_token") || "");
         const [threadId, setThreadId] = useState(() => window.localStorage.getItem("agent_thread_id") || "");
         const [authMode, setAuthMode] = useState("login");
+        const [identifier, setIdentifier] = useState("");
+        const [email, setEmail] = useState("");
         const [username, setUsername] = useState("");
         const [password, setPassword] = useState("");
         const [displayName, setDisplayName] = useState("");
+        const [verificationCode, setVerificationCode] = useState("");
+        const [emailCodeCountdown, setEmailCodeCountdown] = useState(0);
+        const [avatarFile, setAvatarFile] = useState(null);
+        const [avatarPreview, setAvatarPreview] = useState("");
+        const [profileOpen, setProfileOpen] = useState(false);
+        const [profile, setProfile] = useState(null);
+        const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
+        const [profileDisplayName, setProfileDisplayName] = useState("");
+        const [profileEmail, setProfileEmail] = useState("");
+        const [profileVerificationCode, setProfileVerificationCode] = useState("");
         const [messages, setMessages] = useState([]);
         const [uploadedFiles, setUploadedFiles] = useState([]);
         const [input, setInput] = useState("");
@@ -641,6 +653,26 @@
         const [error, setError] = useState("");
         const listRef = useRef(null);
         const fileInputRef = useRef(null);
+        const avatarInputRef = useRef(null);
+        const profileAvatarInputRef = useRef(null);
+
+        useEffect(() => {
+          if (emailCodeCountdown <= 0) return;
+          const timer = window.setTimeout(() => {
+            setEmailCodeCountdown((current) => Math.max(0, current - 1));
+          }, 1000);
+          return () => window.clearTimeout(timer);
+        }, [emailCodeCountdown]);
+
+        useEffect(() => {
+          if (!avatarFile) {
+            setAvatarPreview("");
+            return;
+          }
+          const objectUrl = URL.createObjectURL(avatarFile);
+          setAvatarPreview(objectUrl);
+          return () => URL.revokeObjectURL(objectUrl);
+        }, [avatarFile]);
 
         useEffect(() => {
           if (!token || threadId) return;
@@ -671,6 +703,47 @@
             cancelled = true;
           };
         }, [token, threadId]);
+
+        useEffect(() => {
+          if (!token) {
+            setProfile(null);
+            setProfileAvatarUrl("");
+            return;
+          }
+          let cancelled = false;
+          let objectUrl = "";
+
+          async function loadProfile() {
+            try {
+              const response = await fetch("/profile", {
+                headers: { "Authorization": `Bearer ${token}` },
+              });
+              if (!response.ok) throw new Error(`Profile request failed: ${response.status}`);
+              const data = await response.json();
+              if (cancelled) return;
+              setProfile(data);
+              setProfileDisplayName(data.display_name || "");
+              setProfileEmail(data.email || "");
+              if (data.has_avatar) {
+                const avatarResponse = await fetch("/profile/avatar", {
+                  headers: { "Authorization": `Bearer ${token}` },
+                });
+                if (avatarResponse.ok) {
+                  objectUrl = URL.createObjectURL(await avatarResponse.blob());
+                  if (!cancelled) setProfileAvatarUrl(objectUrl);
+                }
+              }
+            } catch (err) {
+              if (!cancelled) setError("Profile loading failed.");
+            }
+          }
+
+          loadProfile();
+          return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+          };
+        }, [token]);
 
         useEffect(() => {
           if (!token || !threadId) {
@@ -709,6 +782,26 @@
             return data.detail || data.error || `Chat request failed: ${response.status}`;
           } catch (err) {
             return `Chat request failed: ${response.status}`;
+          }
+        }
+
+        async function requestEmailCode(purpose, targetEmail) {
+          const normalizedEmail = targetEmail.trim();
+          if (!normalizedEmail || emailCodeCountdown > 0) return;
+          setError("");
+          try {
+            const response = await fetch("/auth/email-code", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: normalizedEmail, purpose }),
+            });
+            if (!response.ok) {
+              const message = await readErrorMessage(response);
+              throw new Error(message);
+            }
+            setEmailCodeCountdown(60);
+          } catch (err) {
+            setError(err.message || "验证码发送失败。");
           }
         }
 
@@ -834,15 +927,29 @@
           setError("");
 
           try {
-            const response = await fetch(authMode === "login" ? "/auth/login" : "/auth/register", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                username: username.trim(),
-                password,
-                display_name: displayName.trim() || undefined,
-              }),
-            });
+            let response;
+            if (authMode === "login") {
+              response = await fetch("/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  identifier: identifier.trim(),
+                  password,
+                }),
+              });
+            } else {
+              const formData = new FormData();
+              formData.append("email", email.trim());
+              formData.append("username", username.trim());
+              formData.append("password", password);
+              formData.append("verification_code", verificationCode.trim());
+              if (displayName.trim()) formData.append("display_name", displayName.trim());
+              if (avatarFile) formData.append("avatar", avatarFile);
+              response = await fetch("/auth/register", {
+                method: "POST",
+                body: formData,
+              });
+            }
             if (!response.ok) throw new Error(`Auth request failed: ${response.status}`);
             const data = await response.json();
             window.localStorage.setItem("agent_token", data.token);
@@ -850,10 +957,87 @@
             setToken(data.token);
             setThreadId("");
             setMessages([]);
+            setPassword("");
+            setVerificationCode("");
+            setAvatarFile(null);
           } catch (err) {
             setError(authMode === "login" ? "Sign in failed." : "Registration failed.");
           } finally {
             setLoading(false);
+          }
+        }
+
+        async function saveProfile(event) {
+          event.preventDefault();
+          if (!token) return;
+          setError("");
+          try {
+            const response = await fetch("/profile", {
+              method: "PATCH",
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ display_name: profileDisplayName.trim() || null }),
+            });
+            if (!response.ok) {
+              const message = await readErrorMessage(response);
+              throw new Error(message);
+            }
+            setProfile(await response.json());
+          } catch (err) {
+            setError(err.message || "个人资料保存失败。");
+          }
+        }
+
+        async function saveProfileEmail() {
+          if (!token) return;
+          setError("");
+          try {
+            const response = await fetch("/profile/email", {
+              method: "PATCH",
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                email: profileEmail.trim(),
+                verification_code: profileVerificationCode.trim(),
+              }),
+            });
+            if (!response.ok) {
+              const message = await readErrorMessage(response);
+              throw new Error(message);
+            }
+            const data = await response.json();
+            setProfile(data);
+            setProfileVerificationCode("");
+          } catch (err) {
+            setError(err.message || "邮箱更换失败。");
+          }
+        }
+
+        async function uploadProfileAvatar(event) {
+          const selectedAvatar = event.target.files?.[0];
+          event.target.value = "";
+          if (!selectedAvatar || !token) return;
+          setError("");
+          try {
+            const formData = new FormData();
+            formData.append("avatar", selectedAvatar);
+            const response = await fetch("/profile/avatar", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${token}` },
+              body: formData,
+            });
+            if (!response.ok) {
+              const message = await readErrorMessage(response);
+              throw new Error(message);
+            }
+            setProfile(await response.json());
+            setProfileAvatarUrl(URL.createObjectURL(selectedAvatar));
+          } catch (err) {
+            setError(err.message || "头像上传失败。");
           }
         }
 
@@ -883,13 +1067,63 @@
                     <button type="button" onClick={() => setAuthMode("login")} className={`rounded-full px-4 py-2 text-sm ${authMode === "login" ? "bg-white text-black" : "liquid-glass text-white"}`}>Sign in</button>
                     <button type="button" onClick={() => setAuthMode("register")} className={`rounded-full px-4 py-2 text-sm ${authMode === "register" ? "bg-white text-black" : "liquid-glass text-white"}`}>Register</button>
                   </div>
-                  <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                  {authMode === "login" ? (
+                    <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="Username or email" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                  ) : (
+                    <>
+                      <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                      <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                    </>
+                  )}
                   <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Password" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
-                  {authMode === "register" && <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Display name" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />}
+                  {authMode === "register" && (
+                    <>
+                      <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Display name" className="liquid-glass rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                      <div className="flex gap-2">
+                        <input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} placeholder="Email code" className="liquid-glass min-w-0 flex-1 rounded-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" />
+                        <button type="button" onClick={() => requestEmailCode("register", email)} disabled={emailCodeCountdown > 0} className="liquid-glass shrink-0 rounded-full px-4 py-3 text-xs font-semibold text-white disabled:opacity-55">
+                          {emailCodeCountdown > 0 ? `${emailCodeCountdown}s` : "Get code"}
+                        </button>
+                      </div>
+                      <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => setAvatarFile(event.target.files?.[0] || null)} />
+                      <button type="button" onClick={() => avatarInputRef.current?.click()} className="liquid-glass flex items-center gap-3 rounded-full px-4 py-2 text-left text-sm text-white">
+                        {avatarPreview ? <img src={avatarPreview} alt="" className="h-9 w-9 rounded-full object-cover" /> : <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xs">头像</span>}
+                        <span>{avatarFile ? avatarFile.name : "Upload avatar (optional)"}</span>
+                      </button>
+                    </>
+                  )}
                   <button type="submit" disabled={loading} className="rounded-full bg-white px-4 py-3 text-sm font-semibold text-black disabled:opacity-55">{authMode === "login" ? "Sign in" : "Create account"}</button>
                 </form>
               ) : (
                 <>
+                  <div className="liquid-glass shrink-0 rounded-[1.1rem] p-3 text-white">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        {profileAvatarUrl && <img src={profileAvatarUrl} alt="" className="mb-2 h-12 w-12 rounded-full object-cover" />}
+                        <p className="truncate text-sm font-semibold">{profile?.display_name || profile?.username || "Profile"}</p>
+                        <p className="truncate text-xs text-white/55">{profile?.email || "No email bound"}</p>
+                      </div>
+                      <button type="button" onClick={() => setProfileOpen((current) => !current)} className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-black">Profile</button>
+                    </div>
+                    {profileOpen && (
+                      <form onSubmit={saveProfile} className="mt-3 flex flex-col gap-2">
+                        <input value={profileDisplayName} onChange={(event) => setProfileDisplayName(event.target.value)} placeholder="Nickname" className="liquid-glass rounded-full px-4 py-2 text-sm text-white outline-none placeholder:text-white/45" />
+                        <button type="submit" className="liquid-glass rounded-full px-4 py-2 text-sm font-semibold text-white">Save nickname</button>
+                        <input ref={profileAvatarInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={uploadProfileAvatar} />
+                        <button type="button" onClick={() => profileAvatarInputRef.current?.click()} className="liquid-glass rounded-full px-4 py-2 text-sm font-semibold text-white">Change avatar</button>
+                        <div className="flex gap-2">
+                          <input value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} placeholder="New email" className="liquid-glass min-w-0 flex-1 rounded-full px-4 py-2 text-sm text-white outline-none placeholder:text-white/45" />
+                          <button type="button" onClick={() => requestEmailCode("email_change", profileEmail)} disabled={emailCodeCountdown > 0} className="liquid-glass shrink-0 rounded-full px-3 py-2 text-xs font-semibold text-white disabled:opacity-55">
+                            {emailCodeCountdown > 0 ? `${emailCodeCountdown}s` : "Code"}
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <input value={profileVerificationCode} onChange={(event) => setProfileVerificationCode(event.target.value)} placeholder="Email code" className="liquid-glass min-w-0 flex-1 rounded-full px-4 py-2 text-sm text-white outline-none placeholder:text-white/45" />
+                          <button type="button" onClick={saveProfileEmail} className="liquid-glass shrink-0 rounded-full px-3 py-2 text-xs font-semibold text-white">Bind</button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
                   {messages.map((message, index) => (
                     <div key={`${message.role}-${index}`} className={`shrink-0 max-w-[86%] rounded-[1.1rem] px-4 py-3 font-body text-sm leading-snug ${message.role === "user" ? "ml-auto bg-white text-black" : "liquid-glass text-white/95"}`}>
                       <MessageContent text={message.text} />

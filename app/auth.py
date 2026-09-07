@@ -2,16 +2,26 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
+import smtplib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
 
 
 def hash_password(password: str, salt: str | None = None) -> str:
@@ -35,10 +45,21 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def hash_email_code(code: str, email: str) -> str:
+    normalized = normalize_email(email)
+    digest = hashlib.sha256(f"{normalized}:{code}".encode()).hexdigest()
+    return f"sha256${digest}"
+
+
+def verify_email_code(code: str, email: str, code_hash: str) -> bool:
+    return hmac.compare_digest(hash_email_code(code, email), code_hash)
+
+
 @dataclass(frozen=True)
 class User:
     id: str
     username: str
+    email: str | None
     display_name: str | None
 
 
@@ -71,13 +92,21 @@ class AuthRepository:
                 CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
+                    email TEXT UNIQUE,
                     password_hash TEXT NOT NULL,
                     display_name TEXT,
+                    avatar_path TEXT,
+                    avatar_mime_type TEXT,
+                    avatar_updated_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
+            connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+            connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_path TEXT")
+            connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_mime_type TEXT")
+            connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_updated_at TIMESTAMPTZ")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -113,23 +142,49 @@ class AuthRepository:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS email_verification_codes (
+                    id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    used_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(token_hash)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_threads_user_updated ON chat_threads(user_id, updated_at DESC)"
             )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email)) WHERE email IS NOT NULL"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_email_codes_lookup ON email_verification_codes(email, purpose, created_at DESC)"
+            )
 
-    def create_user(self, username: str, password: str, display_name: str | None = None) -> User:
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        display_name: str | None = None,
+        email: str | None = None,
+    ) -> User:
         user_id = f"user-{secrets.token_urlsafe(16)}"
         now = _utc_now()
+        normalized_email = normalize_email(email) if email else None
         with self.connection_factory() as connection:
             row = connection.execute(
                 """
-                INSERT INTO users (id, username, password_hash, display_name, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, username, display_name
+                INSERT INTO users (id, username, email, password_hash, display_name, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, username, email, display_name
                 """,
-                (user_id, username, hash_password(password), display_name, now, now),
+                (user_id, username, normalized_email, hash_password(password), display_name, now, now),
             ).fetchone()
             connection.execute(
                 """
@@ -139,17 +194,81 @@ class AuthRepository:
                 """,
                 (user_id, display_name, now),
             )
-        return User(id=row[0], username=row[1], display_name=row[2])
+        return User(id=row[0], username=row[1], email=row[2], display_name=row[3])
 
-    def authenticate(self, username: str, password: str) -> User | None:
+    def authenticate(self, identifier: str, password: str) -> User | None:
         with self.connection_factory() as connection:
             row = connection.execute(
-                "SELECT id, username, password_hash, display_name FROM users WHERE username = %s",
-                (username,),
+                """
+                SELECT id, username, email, password_hash, display_name
+                FROM users
+                WHERE username = %s OR lower(email) = lower(%s)
+                LIMIT 1
+                """,
+                (identifier, identifier),
             ).fetchone()
-        if row is None or not verify_password(password, row[2]):
+        if row is None or not verify_password(password, row[3]):
             return None
-        return User(id=row[0], username=row[1], display_name=row[3])
+        return User(id=row[0], username=row[1], email=row[2], display_name=row[4])
+
+    def issue_email_verification_code(self, email: str, purpose: str) -> str:
+        normalized_email = normalize_email(email)
+        now = _utc_now()
+        cooldown_started_at = now - timedelta(seconds=settings.auth_email_code_cooldown_seconds)
+        with self.connection_factory() as connection:
+            recent = connection.execute(
+                """
+                SELECT id
+                FROM email_verification_codes
+                WHERE email = %s AND purpose = %s AND created_at > %s
+                LIMIT 1
+                """,
+                (normalized_email, purpose, cooldown_started_at),
+            ).fetchone()
+            if recent is not None:
+                raise ValueError("Email verification code was requested too recently")
+
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            connection.execute(
+                """
+                INSERT INTO email_verification_codes
+                    (id, email, purpose, code_hash, expires_at, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    f"email-code-{secrets.token_urlsafe(16)}",
+                    normalized_email,
+                    purpose,
+                    hash_email_code(code, normalized_email),
+                    now + timedelta(seconds=settings.auth_email_code_ttl_seconds),
+                    now,
+                ),
+            )
+        return code
+
+    def consume_email_verification_code(self, email: str, code: str, purpose: str) -> bool:
+        normalized_email = normalize_email(email)
+        now = _utc_now()
+        with self.connection_factory() as connection:
+            row = connection.execute(
+                """
+                SELECT id, code_hash, expires_at, used_at
+                FROM email_verification_codes
+                WHERE email = %s AND purpose = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (normalized_email, purpose),
+            ).fetchone()
+            if row is None or row[3] is not None or row[2] <= now:
+                return False
+            if not verify_email_code(code, normalized_email, row[1]):
+                return False
+            connection.execute(
+                "UPDATE email_verification_codes SET used_at = %s WHERE id = %s",
+                (now, row[0]),
+            )
+        return True
 
     def create_session(self, user_id: str, ttl: timedelta = timedelta(days=7)) -> str:
         token = secrets.token_urlsafe(32)
@@ -222,25 +341,80 @@ class AuthRepository:
         with self.connection_factory() as connection:
             row = connection.execute(
                 """
-                SELECT display_name, summary, preferences, traits
-                FROM user_profiles
-                WHERE user_id = %s
+                SELECT u.username,
+                       u.email,
+                       COALESCE(p.display_name, u.display_name),
+                       COALESCE(p.summary, ''),
+                       COALESCE(p.preferences, '{}'::jsonb),
+                       COALESCE(p.traits, '{}'::jsonb),
+                       u.avatar_path IS NOT NULL
+                FROM users u
+                LEFT JOIN user_profiles p ON p.user_id = u.id
+                WHERE u.id = %s
                 """,
                 (user_id,),
             ).fetchone()
         if row is None:
             return {
+                "username": None,
+                "email": None,
                 "display_name": None,
+                "has_avatar": False,
                 "summary": "",
                 "preferences": {},
                 "traits": {},
             }
         return {
-            "display_name": row[0],
-            "summary": row[1],
-            "preferences": row[2],
-            "traits": row[3],
+            "username": row[0],
+            "email": row[1],
+            "display_name": row[2],
+            "summary": row[3],
+            "preferences": row[4],
+            "traits": row[5],
+            "has_avatar": bool(row[6]),
         }
+
+    def update_user_email(self, user_id: str, email: str) -> None:
+        with self.connection_factory() as connection:
+            connection.execute(
+                """
+                UPDATE users
+                SET email = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (normalize_email(email), _utc_now(), user_id),
+            )
+
+    def set_user_avatar(self, user_id: str, path: Path, mime_type: str) -> None:
+        with self.connection_factory() as connection:
+            connection.execute(
+                """
+                UPDATE users
+                SET avatar_path = %s,
+                    avatar_mime_type = %s,
+                    avatar_updated_at = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (str(path), mime_type, _utc_now(), _utc_now(), user_id),
+            )
+
+    def get_user_avatar(self, user_id: str) -> tuple[Path, str] | None:
+        with self.connection_factory() as connection:
+            row = connection.execute(
+                """
+                SELECT avatar_path, avatar_mime_type
+                FROM users
+                WHERE id = %s
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None or not row[0]:
+            return None
+        path = Path(str(row[0]))
+        if not path.exists():
+            return None
+        return path, row[1] or "application/octet-stream"
 
     def upsert_profile(
         self,
@@ -281,3 +455,31 @@ def build_auth_repository() -> AuthRepository:
     repository = AuthRepository.from_conn_string(settings.database_url)
     repository.setup()
     return repository
+
+
+class EmailCodeSender:
+    def send_verification_code(self, email: str, code: str, purpose: str) -> None:
+        if not settings.auth_smtp_host.strip():
+            logger.warning("SMTP is not configured; verification code for %s is %s", email, code)
+            return
+
+        sender = settings.auth_smtp_from_email or settings.auth_smtp_username
+        if not sender:
+            raise RuntimeError("AUTH_SMTP_FROM_EMAIL or AUTH_SMTP_USERNAME must be configured")
+
+        message = EmailMessage()
+        message["Subject"] = "Your verification code"
+        message["From"] = sender
+        message["To"] = email
+        action = "register your account" if purpose == "register" else "change your email"
+        message.set_content(
+            f"Your verification code is {code}.\n\n"
+            f"Use it to {action}. It expires in {settings.auth_email_code_ttl_seconds // 60} minutes."
+        )
+
+        with smtplib.SMTP(settings.auth_smtp_host, settings.auth_smtp_port, timeout=10) as smtp:
+            if settings.auth_smtp_use_tls:
+                smtp.starttls()
+            if settings.auth_smtp_username:
+                smtp.login(settings.auth_smtp_username, settings.auth_smtp_password)
+            smtp.send_message(message)

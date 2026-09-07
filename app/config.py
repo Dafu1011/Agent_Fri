@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     image_generation_timeout_seconds: int = 300
     image_generation_max_images: int = 4
 
+    auth_email_code_ttl_seconds: int = 600
+    auth_email_code_cooldown_seconds: int = 60
+    auth_smtp_host: str = ""
+    auth_smtp_port: int = 587
+    auth_smtp_username: str = ""
+    auth_smtp_password: str = ""
+    auth_smtp_from_email: str = ""
+    auth_smtp_use_tls: bool = True
+
     @property
     def storage_path(self) -> Path:
         return Path(self.storage_dir)

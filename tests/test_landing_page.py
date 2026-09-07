@@ -16,7 +16,17 @@ def test_root_serves_landing_chat_page():
     assert "user_id: userId" not in response.text
     assert '"Authorization": `Bearer ${token}`' in response.text
     assert 'fetch(`/chat/${threadId}`' in response.text
-    assert 'fetch(authMode === "login" ? "/auth/login" : "/auth/register"' in response.text
+    assert 'fetch("/auth/login"' in response.text
+    assert 'fetch("/auth/register"' in response.text
+    assert 'fetch("/auth/email-code"' in response.text
+    assert "identifier: identifier.trim()" in response.text
+    assert 'formData.append("email", email.trim())' in response.text
+    assert 'formData.append("verification_code", verificationCode.trim())' in response.text
+    assert 'formData.append("avatar", avatarFile)' in response.text
+    assert "setEmailCodeCountdown(60)" in response.text
+    assert "/profile/avatar" in response.text
+    assert "/profile/email" in response.text
+    assert 'fetch("/profile"' in response.text
     assert "window.Motion = window.Motion || window.FramerMotion" in response.text
 
 
