@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -17,17 +19,18 @@ class MediaAttachment(BaseModel):
 class ChatRequest(BaseModel):
     thread_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    file_ids: list[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
     reply: str
-    attachments: list[MediaAttachment] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatHistoryMessage(BaseModel):
     role: str
     text: str
-    attachments: list[MediaAttachment] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatHistoryResponse(BaseModel):

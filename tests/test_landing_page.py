@@ -70,8 +70,8 @@ def test_chat_messages_render_media_attachments():
     client = TestClient(app)
     response = client.get("/")
 
-    assert "function MediaAttachments({ attachments })" in response.text
-    assert "<MediaAttachments attachments={message.attachments} />" in response.text
+    assert "function MediaAttachments({ attachments, onImageJobReady })" in response.text
+    assert "<MediaAttachments attachments={message.attachments} onImageJobReady={handleImageJobReady} />" in response.text
     assert "<video controls" in response.text
     assert "attachment.media_type === \"image_gallery\"" in response.text
     assert "<PhotoStack images={attachment.images} title={attachment.title} sourceImages={attachment.source_images} />" in response.text
@@ -79,6 +79,32 @@ def test_chat_messages_render_media_attachments():
     assert "function MediaVideo({ attachment })" in response.text
     assert "onError={() => setFailed(true)}" in response.text
     assert "attachment.source_url" in response.text
+
+
+def test_chat_panel_uploads_files_and_renders_file_attachments():
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert "function FileAttachment({ attachment })" in response.text
+    assert "async function uploadFiles(event)" in response.text
+    assert 'fetch("/files/upload"' in response.text
+    assert "FormData()" in response.text
+    assert "uploadedFiles.map((file) => (" in response.text
+    assert "file_ids: filesForMessage.map((file) => file.file_id)" in response.text
+    assert "attachment.download_url" in response.text
+    assert 'type="file"' in response.text
+
+
+def test_chat_panel_renders_generated_images_and_polls_generation_jobs():
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert "function GeneratedImageAttachment({ attachment })" in response.text
+    assert "function ImageGenerationJobAttachment({ attachment, onReady })" in response.text
+    assert "fetch(attachment.poll_url" in response.text
+    assert "attachment.media_type === \"generated_image\"" in response.text
+    assert "attachment.media_type === \"image_generation_job\"" in response.text
+    assert "onImageJobReady" in response.text
 
 
 def test_image_gallery_uses_stacked_cards_interaction():

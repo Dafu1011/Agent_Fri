@@ -4,6 +4,8 @@ from types import ModuleType
 import pytest
 
 from app.config import parse_mcp_servers_json
+from app.agent.tools.documents import build_document_tools
+from app.agent.tools.images import build_image_generation_tools
 from app.agent.tools.mcp import load_mcp_tools_from_config
 from app.agent.tools.registry import build_builtin_tools, build_runtime_tools, build_tools
 from app.agent.tools import web
@@ -29,6 +31,68 @@ def test_build_tools_includes_injected_tools_after_builtin_tools(monkeypatch):
     assert tools[0].name == "get_current_weather"
     assert tools[1].name == "parse_social_media_link"
     assert tools[2:] == [first_tool, second_tool]
+
+
+@pytest.mark.anyio
+async def test_build_document_tools_converts_files_for_current_user():
+    class FakeResult:
+        attachment = {"file_id": "file-2", "download_url": "/documents/files/file-2/download"}
+        message = "已转换为 PDF。"
+
+    class FakeService:
+        def convert(self, *, user_id, file_ids, instruction="", target_format=""):
+            assert user_id == "user-1"
+            assert file_ids == ["file-1"]
+            assert instruction == "转成 PDF"
+            assert target_format == "pdf"
+            return FakeResult()
+
+    tools = build_document_tools(user_id="user-1", service=FakeService())
+
+    assert [tool.name for tool in tools] == ["convert_uploaded_file"]
+    result = await tools[0].ainvoke(
+        {
+            "file_ids": ["file-1"],
+            "instruction": "转成 PDF",
+            "target_format": "pdf",
+        }
+    )
+    assert result == {
+        "message": "已转换为 PDF。",
+        "attachment": {"file_id": "file-2", "download_url": "/documents/files/file-2/download"},
+    }
+
+
+@pytest.mark.anyio
+async def test_build_image_generation_tools_generates_images_for_current_user():
+    class FakeResult:
+        attachments = [{"image_id": "img-1", "image_url": "/images/files/img-1"}]
+        message = "图片已生成。"
+
+    class FakeService:
+        async def generate(self, *, user_id, prompt, size="", quality="", count=1):
+            assert user_id == "user-1"
+            assert prompt == "画一张封面图"
+            assert size == "1024x1024"
+            assert quality == "medium"
+            assert count == 1
+            return FakeResult()
+
+    tools = build_image_generation_tools(user_id="user-1", service=FakeService())
+
+    assert [tool.name for tool in tools] == ["generate_image"]
+    result = await tools[0].ainvoke(
+        {
+            "prompt": "画一张封面图",
+            "size": "1024x1024",
+            "quality": "medium",
+            "count": 1,
+        }
+    )
+    assert result == {
+        "message": "图片已生成。",
+        "attachments": [{"image_id": "img-1", "image_url": "/images/files/img-1"}],
+    }
 
 
 def test_build_web_tools_returns_empty_without_searxng_base_url(monkeypatch):

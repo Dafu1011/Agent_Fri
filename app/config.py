@@ -43,6 +43,23 @@ class Settings(BaseSettings):
     media_xhs_user_agent: str = ""
     media_kuaishou_user_agent: str = ""
 
+    document_max_upload_mb: int = 50
+    document_conversion_timeout_seconds: int = 120
+    document_ocr_timeout_seconds: int = 300
+    document_libreoffice_path: str = ""
+    document_ocrmypdf_path: str = ""
+    document_tesseract_path: str = ""
+    document_ocr_languages: str = "chi_sim+eng"
+
+    image_openai_api_key: str = ""
+    image_openai_base_url: str | None = None
+    image_generation_model: str = "gpt-image-2"
+    image_generation_default_size: str = "1024x1024"
+    image_generation_default_quality: str = "medium"
+    image_generation_default_format: str = "png"
+    image_generation_timeout_seconds: int = 300
+    image_generation_max_images: int = 4
+
     @property
     def storage_path(self) -> Path:
         return Path(self.storage_dir)

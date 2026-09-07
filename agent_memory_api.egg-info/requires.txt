@@ -5,8 +5,17 @@ langgraph
 langgraph-checkpoint-postgres
 psycopg[binary,pool]
 python-dotenv
+python-multipart
 pydantic-settings
+httpx
+imageio-ffmpeg
+pillow
+python-docx
+pdf2docx
 
 [dev]
 pytest
-httpx
+
+[tools]
+langchain-mcp-adapters
+mcp

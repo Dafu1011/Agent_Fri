@@ -10,7 +10,15 @@ Requires-Dist: langgraph
 Requires-Dist: langgraph-checkpoint-postgres
 Requires-Dist: psycopg[binary,pool]
 Requires-Dist: python-dotenv
+Requires-Dist: python-multipart
 Requires-Dist: pydantic-settings
+Requires-Dist: httpx
+Requires-Dist: imageio-ffmpeg
+Requires-Dist: pillow
+Requires-Dist: python-docx
+Requires-Dist: pdf2docx
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
-Requires-Dist: httpx; extra == "dev"
+Provides-Extra: tools
+Requires-Dist: langchain-mcp-adapters; extra == "tools"
+Requires-Dist: mcp; extra == "tools"

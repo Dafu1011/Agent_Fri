@@ -11,9 +11,13 @@ dependencies = [
   "langgraph-checkpoint-postgres",
   "psycopg[binary,pool]",
   "python-dotenv",
+  "python-multipart",
   "pydantic-settings",
   "httpx",
   "imageio-ffmpeg",
+  "pillow",
+  "python-docx",
+  "pdf2docx",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +28,10 @@ tools = [
   "langchain-mcp-adapters",
   "mcp",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app", "app.*"]
+exclude = ["runtime*", "searxng*", "cookie_manager*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

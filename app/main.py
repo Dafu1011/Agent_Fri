@@ -9,6 +9,13 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.knowledge import router as knowledge_router
 from app.api.memory import router as memory_router
+from app.document_tools.api.document_router import router as document_router
+from app.document_tools.service import DocumentConversionService
+from app.document_tools.storage import DocumentStorage
+from app.image_generation.api.image_router import router as image_generation_router
+from app.image_generation.jobs import ImageGenerationJobStore
+from app.image_generation.service import ImageGenerationService
+from app.image_generation.storage import ImageGenerationStorage
 from app.media_downloader.api.media_router import router as media_router
 from app.agent.graph import (
     build_chat_graph,
@@ -31,6 +38,14 @@ async def lifespan(app: FastAPI):
     knowledge_repository = None
     memory_repository = None
     startup_errors = {}
+    document_storage = DocumentStorage(settings.storage_path)
+    app.state.document_storage = document_storage
+    app.state.document_conversion_service = DocumentConversionService(document_storage)
+    image_generation_storage = ImageGenerationStorage(settings.storage_path)
+    image_generation_service = ImageGenerationService(image_generation_storage)
+    app.state.image_generation_storage = image_generation_storage
+    app.state.image_generation_service = image_generation_service
+    app.state.image_generation_job_store = ImageGenerationJobStore(image_generation_service)
 
     try:
         auth_repository = build_auth_repository()
@@ -104,6 +119,8 @@ app.include_router(chat_router)
 app.include_router(knowledge_router)
 app.include_router(memory_router)
 app.include_router(media_router)
+app.include_router(document_router)
+app.include_router(image_generation_router)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
