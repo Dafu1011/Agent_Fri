@@ -1,5 +1,7 @@
 from typing import Any, Sequence
 
+import httpx
+
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -129,6 +131,8 @@ async def generate_model_message(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         temperature=0,
+        http_client=httpx.Client(trust_env=False),
+        http_async_client=httpx.AsyncClient(trust_env=False),
     )
     if tools:
         llm = llm.bind_tools(tools)

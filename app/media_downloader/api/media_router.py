@@ -129,7 +129,11 @@ async def preview_image(
         if image_index < 0 or image_index >= len(info.images):
             raise InvalidMediaUrlError("图片索引不存在")
         url = info.images[image_index]
-        async with httpx.AsyncClient(timeout=settings.media_download_timeout_seconds, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=settings.media_download_timeout_seconds,
+            follow_redirects=True,
+            trust_env=False,
+        ) as client:
             response = await client.get(url, headers=build_media_resource_headers(info))
         response.raise_for_status()
         return Response(

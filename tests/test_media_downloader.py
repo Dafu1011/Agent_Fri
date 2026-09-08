@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pathlib import Path
@@ -10,6 +11,7 @@ from app.media_downloader.core.streamer import MediaPreviewStreamer
 from app.media_downloader.platforms.douyin import DouyinExtractor
 from app.media_downloader.platforms.xiaohongshu import XHSExtractor
 from app.media_downloader.schemas.media import MediaInfo
+from app.media_downloader.utils.request import build_headers, fetch_text_response
 
 
 def test_detect_platform_extracts_douyin_url_from_share_text():
@@ -109,6 +111,91 @@ def test_media_parse_route_returns_proxied_image_payload():
         "/media/image/parse-images/0",
         "/media/image/parse-images/1",
     ]
+
+
+def test_media_image_preview_ignores_environment_proxy_settings(monkeypatch):
+    captured = {}
+
+    class FakeService:
+        def get_cached_parse(self, parse_id: str):
+            assert parse_id == "parse-images"
+            return MediaInfo(
+                platform="xiaohongshu",
+                type="images",
+                images=["https://sns-webpic-qc.xhscdn.com/a!nd_dft_wlteh_jpg_3"],
+            )
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured["trust_env"] = kwargs.get("trust_env")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            return httpx.Response(
+                200,
+                request=httpx.Request("GET", url),
+                content=b"image-bytes",
+                headers={"content-type": "image/jpeg"},
+            )
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_media_extractor_service] = lambda: FakeService()
+    monkeypatch.setenv("all_proxy", "socks://127.0.0.1:7897")
+    monkeypatch.setattr("app.media_downloader.api.media_router.httpx.AsyncClient", FakeAsyncClient)
+    client = TestClient(app)
+
+    response = client.get("/media/image/parse-images/0")
+
+    assert response.status_code == 200
+    assert response.content == b"image-bytes"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert captured["trust_env"] is False
+
+
+@pytest.mark.anyio
+async def test_fetch_text_response_ignores_environment_proxy_settings(monkeypatch):
+    captured = {}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured["trust_env"] = kwargs.get("trust_env")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            return httpx.Response(
+                200,
+                request=httpx.Request("GET", url),
+                text="ok",
+            )
+
+    monkeypatch.setenv("all_proxy", "socks://127.0.0.1:7897")
+    monkeypatch.setattr("app.media_downloader.utils.request.httpx.AsyncClient", FakeAsyncClient)
+
+    response = await fetch_text_response("https://v.douyin.com/demo/")
+
+    assert response.text == "ok"
+    assert captured["trust_env"] is False
+
+
+def test_build_headers_removes_non_ascii_header_characters():
+    headers = build_headers(
+        cookie="sessionid=abc…def",
+        user_agent="Mozilla/5.0 Chrome/152… Safari/537.36",
+    )
+
+    assert headers["Cookie"] == "sessionid=abcdef"
+    assert headers["User-Agent"] == "Mozilla/5.0 Chrome/152 Safari/537.36"
 
 
 def test_xhs_html_fallback_ignores_non_xhs_image_assets():
@@ -235,3 +322,54 @@ async def test_preview_streamer_keeps_downloaded_mp4_when_transcode_fails(tmp_pa
 
     assert target.exists()
     assert target.read_bytes().startswith(b"\x00\x00\x00 ftypisom")
+
+
+@pytest.mark.anyio
+async def test_preview_streamer_ignores_environment_proxy_settings(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield b"\x00\x00\x00 ftypisom"
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured["trust_env"] = kwargs.get("trust_env")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        def stream(self, *args, **kwargs):
+            return FakeStreamResponse()
+
+    monkeypatch.setenv("all_proxy", "socks://127.0.0.1:7897")
+    monkeypatch.setattr("app.media_downloader.core.streamer.httpx.AsyncClient", FakeAsyncClient)
+
+    target = tmp_path / "preview.source"
+    streamer = MediaPreviewStreamer(tmp_path)
+
+    content_type = await streamer._fetch_to_path(
+        "https://example.com/video.mp4",
+        target,
+        1024,
+        {},
+    )
+
+    assert content_type == "video/mp4"
+    assert target.read_bytes().startswith(b"\x00\x00\x00 ftypisom")
+    assert captured["trust_env"] is False

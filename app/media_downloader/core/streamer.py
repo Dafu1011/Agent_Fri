@@ -141,7 +141,11 @@ class MediaPreviewStreamer:
     async def _fetch_to_path(self, url: str, path: Path, max_bytes: int, headers: Mapping[str, str]) -> str:
         total = 0
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_seconds,
+                follow_redirects=True,
+                trust_env=False,
+            ) as client:
                 async with client.stream("GET", url, headers=headers) as response:
                     if response.status_code in {401, 403}:
                         raise MediaDownloadError(f"预览视频下载被平台拒绝: {response.status_code}")

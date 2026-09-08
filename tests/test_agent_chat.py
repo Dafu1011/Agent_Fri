@@ -1,4 +1,9 @@
-from app.agent.chat import build_model_messages
+import sys
+from types import ModuleType
+
+import pytest
+
+from app.agent.chat import build_model_messages, generate_model_message
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 
@@ -117,3 +122,29 @@ def test_build_model_messages_includes_knowledge_context():
 
     assert "Relevant knowledge base context" in messages[0].content
     assert "- 部署文档: 使用 Docker Compose 启动 postgres" in messages[0].content
+
+
+@pytest.mark.anyio
+async def test_generate_model_message_ignores_environment_proxy_settings(monkeypatch):
+    calls = []
+    fake_module = ModuleType("langchain_openai")
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="ok")
+
+    fake_module.ChatOpenAI = FakeChatOpenAI
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_module)
+    monkeypatch.setenv("all_proxy", "socks://127.0.0.1:7897")
+    monkeypatch.setattr("app.agent.chat.settings.openai_api_key", "chat-key")
+    monkeypatch.setattr("app.agent.chat.settings.openai_base_url", "https://chat.example/v1")
+    monkeypatch.setattr("app.agent.chat.settings.openai_model", "gpt-5.5")
+
+    response = await generate_model_message([{"role": "user", "content": "你好"}])
+
+    assert response.content == "ok"
+    assert calls[0]["http_client"].trust_env is False
+    assert calls[0]["http_async_client"].trust_env is False

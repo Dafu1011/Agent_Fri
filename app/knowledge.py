@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import httpx
+
 from app.config import settings
 
 
@@ -63,6 +65,8 @@ class OpenAIEmbeddingProvider:
             base_url=settings.openai_embedding_base_url or settings.openai_base_url,
             check_embedding_ctx_length=False,
             dimensions=settings.openai_embedding_dimensions,
+            http_client=httpx.Client(trust_env=False),
+            http_async_client=httpx.AsyncClient(trust_env=False),
         )
 
 

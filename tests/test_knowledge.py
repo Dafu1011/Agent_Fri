@@ -200,15 +200,11 @@ def test_openai_embedding_provider_prefers_embedding_specific_credentials(monkey
     from app.knowledge import OpenAIEmbeddingProvider
 
     assert OpenAIEmbeddingProvider().embed_query("hello") == [0.1, 0.2, 0.3]
-    assert calls == [
-        {
-            "model": "qwen3.7-text-embedding",
-            "api_key": "embedding-key",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "check_embedding_ctx_length": False,
-            "dimensions": 1536,
-        }
-    ]
+    assert calls[0]["model"] == "qwen3.7-text-embedding"
+    assert calls[0]["api_key"] == "embedding-key"
+    assert calls[0]["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert calls[0]["check_embedding_ctx_length"] is False
+    assert calls[0]["dimensions"] == 1536
 
 
 def test_openai_embedding_provider_does_not_reuse_chat_key_for_embedding_endpoint(monkeypatch):
@@ -259,3 +255,27 @@ def test_openai_embedding_provider_can_override_dimensions(monkeypatch):
 
     assert OpenAIEmbeddingProvider().embed_query("hello") == [0.1, 0.2, 0.3]
     assert calls[0]["dimensions"] == 1024
+
+
+def test_openai_embedding_provider_ignores_environment_proxy_settings(monkeypatch):
+    calls = []
+    fake_module = ModuleType("langchain_openai")
+
+    class FakeOpenAIEmbeddings:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def embed_query(self, text):
+            return [0.1, 0.2, 0.3]
+
+    fake_module.OpenAIEmbeddings = FakeOpenAIEmbeddings
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_module)
+    monkeypatch.setenv("all_proxy", "socks://127.0.0.1:7897")
+    monkeypatch.setattr("app.knowledge.settings.openai_embedding_api_key", "embedding-key")
+    monkeypatch.setattr("app.knowledge.settings.openai_embedding_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+    from app.knowledge import OpenAIEmbeddingProvider
+
+    assert OpenAIEmbeddingProvider().embed_query("hello") == [0.1, 0.2, 0.3]
+    assert calls[0]["http_client"].trust_env is False
+    assert calls[0]["http_async_client"].trust_env is False

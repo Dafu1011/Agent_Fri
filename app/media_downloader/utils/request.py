@@ -19,14 +19,18 @@ class FetchedTextResponse:
     status_code: int
 
 
+def _ascii_header_value(value: str) -> str:
+    return value.encode("ascii", "ignore").decode("ascii").strip()
+
+
 def build_headers(cookie: str = "", user_agent: str = "") -> dict[str, str]:
     headers = {
-        "User-Agent": user_agent or DEFAULT_USER_AGENT,
+        "User-Agent": _ascii_header_value(user_agent or DEFAULT_USER_AGENT),
         "Accept": "text/html,application/json,text/plain,*/*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     }
     if cookie:
-        headers["Cookie"] = cookie
+        headers["Cookie"] = _ascii_header_value(cookie)
     return headers
 
 
@@ -37,7 +41,12 @@ async def fetch_text(url: str, *, headers: Mapping[str, str] | None = None, time
 
 async def fetch_text_response(url: str, *, headers: Mapping[str, str] | None = None, timeout: float = 20.0) -> FetchedTextResponse:
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers=headers) as client:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=timeout,
+            headers=headers,
+            trust_env=False,
+        ) as client:
             response = await client.get(url)
             if response.status_code in {401, 403}:
                 raise PlatformAuthRequiredError("平台需要登录态或 Cookie 已失效")

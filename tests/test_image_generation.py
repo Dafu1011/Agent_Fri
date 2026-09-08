@@ -206,6 +206,48 @@ def test_image_generation_client_requires_image_specific_key(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_image_generation_client_ignores_environment_proxy_settings(monkeypatch):
+    captured = {}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured["trust_env"] = kwargs.get("trust_env")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", "https://images.example/v1/images/generations"),
+                json={
+                    "data": [
+                        {
+                            "b64_json": base64.b64encode(PNG_BYTES).decode("ascii"),
+                        }
+                    ],
+                },
+            )
+
+    monkeypatch.setenv("ALL_PROXY", "socks://127.0.0.1:7897")
+    monkeypatch.setattr("app.image_generation.service.httpx.AsyncClient", FakeAsyncClient)
+
+    client = ImageGenerationClient(
+        api_key="image-key",
+        base_url="https://images.example/v1",
+        model="gpt-image-2",
+        timeout_seconds=12,
+    )
+
+    await client.generate(prompt="画一张海报", size="1024x1024", quality="medium", count=1)
+
+    assert captured["trust_env"] is False
+
+
+@pytest.mark.anyio
 async def test_image_generation_service_stores_generated_images_as_chat_attachments(tmp_path):
     class FakeClient:
         async def generate(self, *, prompt, size, quality, count):

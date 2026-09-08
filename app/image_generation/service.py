@@ -69,6 +69,7 @@ class ImageGenerationClient:
             base_url=self.base_url,
             timeout=self.timeout_seconds,
             transport=self.transport,
+            trust_env=False,
         ) as client:
             try:
                 response = await client.post(
