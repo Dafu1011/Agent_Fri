@@ -12,6 +12,10 @@ imageio-ffmpeg
 pillow
 python-docx
 pdf2docx
+openpyxl
+reportlab
+pypdf
+pdfplumber
 
 [dev]
 pytest

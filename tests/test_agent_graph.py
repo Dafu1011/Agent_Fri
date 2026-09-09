@@ -93,6 +93,45 @@ async def test_run_chat_graph_loads_and_saves_long_term_memory(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_run_chat_graph_uses_text_part_of_multimodal_message_for_memory(monkeypatch):
+    user_message = HumanMessage(
+        content=[
+            {"type": "text", "text": "反推图片的提示词"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]
+    )
+
+    class FakeMemoryRepository:
+        def __init__(self):
+            self.saved = []
+
+        def search_memories(self, user_id: str, query: str, limit: int = 5):
+            assert query == "反推图片的提示词"
+            return []
+
+        def save_from_message(self, user_id: str, thread_id: str, message: str):
+            self.saved.append(message)
+
+    repository = FakeMemoryRepository()
+
+    async def fake_generate_reply(messages, memories=None, knowledge=None):
+        assert messages[-1] == user_message
+        return "图片提示词已生成。"
+
+    monkeypatch.setattr("app.agent.graph.generate_reply", fake_generate_reply)
+
+    reply = await run_chat_graph(
+        user_message,
+        thread_id="thread-1",
+        user_id="user-1",
+        memory_repository=repository,
+    )
+
+    assert reply == "图片提示词已生成。"
+    assert repository.saved == ["反推图片的提示词"]
+
+
+@pytest.mark.anyio
 async def test_run_chat_graph_loads_knowledge_context(monkeypatch):
     class FakeKnowledgeRepository:
         def search(self, user_id: str, query: str, limit: int = 5):

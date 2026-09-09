@@ -38,10 +38,167 @@ def test_auth_repository_setup_creates_user_tables():
     assert any("CREATE TABLE IF NOT EXISTS users" in stmt for stmt in connection.statements)
     assert any("CREATE TABLE IF NOT EXISTS user_sessions" in stmt for stmt in connection.statements)
     assert any("CREATE TABLE IF NOT EXISTS chat_threads" in stmt for stmt in connection.statements)
+    assert any("CREATE TABLE IF NOT EXISTS chat_messages" in stmt for stmt in connection.statements)
+    assert any("ADD COLUMN IF NOT EXISTS pinned_at" in stmt for stmt in connection.statements)
+    assert any("ADD COLUMN IF NOT EXISTS deleted_at" in stmt for stmt in connection.statements)
     assert any("CREATE TABLE IF NOT EXISTS user_profiles" in stmt for stmt in connection.statements)
     assert any("CREATE TABLE IF NOT EXISTS email_verification_codes" in stmt for stmt in connection.statements)
     assert any("ADD COLUMN IF NOT EXISTS email" in stmt for stmt in connection.statements)
     assert any("idx_users_email_lower" in stmt for stmt in connection.statements)
+
+
+def test_auth_repository_saves_and_lists_thread_messages():
+    class FakeInsertResult:
+        def fetchone(self):
+            return (
+                "msg-1",
+                "thread-1",
+                "user-1",
+                "assistant",
+                "已生成文档。",
+                [{"media_type": "file", "download_url": "/documents/files/file-1/download"}],
+                "2026-09-09T00:00:00+00:00",
+            )
+
+    class FakeListResult:
+        def fetchall(self):
+            return [
+                (
+                    "msg-1",
+                    "thread-1",
+                    "user-1",
+                    "assistant",
+                    "已生成文档。",
+                    [{"media_type": "file", "download_url": "/documents/files/file-1/download"}],
+                    "2026-09-09T00:00:00+00:00",
+                )
+            ]
+
+    class FakeConnection:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            text = str(statement)
+            self.calls.append((text, params))
+            if "INSERT INTO chat_messages" in text:
+                return FakeInsertResult()
+            return FakeListResult()
+
+    connection = FakeConnection()
+    repository = AuthRepository(lambda: connection)
+
+    saved = repository.save_thread_message(
+        user_id="user-1",
+        thread_id="thread-1",
+        role="assistant",
+        text="已生成文档。",
+        attachments=[{"media_type": "file", "download_url": "/documents/files/file-1/download"}],
+    )
+    messages = repository.list_thread_messages("user-1", "thread-1")
+
+    assert saved.text == "已生成文档。"
+    assert saved.attachments == [{"media_type": "file", "download_url": "/documents/files/file-1/download"}]
+    assert messages[0].role == "assistant"
+    assert messages[0].attachments[0]["media_type"] == "file"
+    assert any("UPDATE chat_threads" in call[0] for call in connection.calls)
+
+
+def test_auth_repository_summarizes_thread_title_from_first_user_message():
+    class FakeInsertResult:
+        def fetchone(self):
+            return (
+                "msg-1",
+                "thread-1",
+                "user-1",
+                "user",
+                "请帮我分析多Agent系统的任务拆分与工具选择流程",
+                [],
+                "2026-09-09T00:00:00+00:00",
+            )
+
+    class FakeConnection:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            self.calls.append((str(statement), params))
+            return FakeInsertResult()
+
+    connection = FakeConnection()
+    repository = AuthRepository(lambda: connection)
+
+    repository.save_thread_message(
+        user_id="user-1",
+        thread_id="thread-1",
+        role="user",
+        text="请帮我分析多Agent系统的任务拆分与工具选择流程",
+    )
+
+    update_call = next(call for call in connection.calls if "UPDATE chat_threads" in call[0])
+    assert update_call[1][1] == "请帮我分析多Agent系统的任务拆分与工具选择流程"
+
+
+def test_auth_repository_manages_thread_title_pin_and_delete():
+    class FakeThreadResult:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class FakeConnection:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            text = str(statement)
+            self.calls.append((text, params))
+            if "SET title" in text:
+                return FakeThreadResult(
+                    ("thread-1", "user-1", "重命名标题", "2026-09-09", "2026-09-09", None)
+                )
+            if "SET pinned_at" in text:
+                return FakeThreadResult(
+                    ("thread-1", "user-1", "重命名标题", "2026-09-09", "2026-09-09", "2026-09-09")
+                )
+            if "SET deleted_at" in text:
+                return FakeThreadResult(
+                    ("thread-1", "user-1", "重命名标题", "2026-09-09", "2026-09-09", "2026-09-09")
+                )
+            return FakeThreadResult(None)
+
+    connection = FakeConnection()
+    repository = AuthRepository(lambda: connection)
+
+    renamed = repository.rename_thread("user-1", "thread-1", "  重命名标题  ")
+    pinned = repository.set_thread_pinned("user-1", "thread-1", True)
+    deleted = repository.delete_thread("user-1", "thread-1")
+
+    assert renamed is not None
+    assert renamed.title == "重命名标题"
+    assert pinned is not None
+    assert pinned.pinned_at is not None
+    assert deleted is True
+    assert any("deleted_at IS NULL" in call[0] for call in connection.calls)
 
 
 def test_auth_repository_checks_thread_ownership():
@@ -219,6 +376,51 @@ def test_profile_endpoint_updates_display_name(monkeypatch):
     assert response.status_code == 200
     assert response.json()["display_name"] == "New"
     assert updates == [("user-1", "New", "summary", {}, {})]
+
+
+def test_thread_management_endpoints_rename_pin_and_delete(monkeypatch):
+    calls = []
+
+    class FakeThread:
+        id = "thread-1"
+        user_id = "user-1"
+        title = "Renamed"
+        created_at = "2026-09-09"
+        updated_at = "2026-09-09"
+        pinned_at = "2026-09-09"
+
+    class FakeRepository:
+        def rename_thread(self, user_id, thread_id, title):
+            calls.append(("rename", user_id, thread_id, title))
+            return FakeThread()
+
+        def set_thread_pinned(self, user_id, thread_id, pinned):
+            calls.append(("pin", user_id, thread_id, pinned))
+            return FakeThread()
+
+        def delete_thread(self, user_id, thread_id):
+            calls.append(("delete", user_id, thread_id))
+            return True
+
+    monkeypatch.setattr("app.api.auth.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr("app.api.auth.get_auth_repository", lambda request: FakeRepository())
+
+    client = TestClient(app)
+    rename_response = client.patch("/threads/thread-1", json={"title": "Renamed"})
+    pin_response = client.patch("/threads/thread-1/pin", json={"pinned": True})
+    delete_response = client.delete("/threads/thread-1")
+
+    assert rename_response.status_code == 200
+    assert rename_response.json()["title"] == "Renamed"
+    assert rename_response.json()["pinned_at"] == "2026-09-09"
+    assert pin_response.status_code == 200
+    assert pin_response.json()["pinned_at"] == "2026-09-09"
+    assert delete_response.status_code == 204
+    assert calls == [
+        ("rename", "user-1", "thread-1", "Renamed"),
+        ("pin", "user-1", "thread-1", True),
+        ("delete", "user-1", "thread-1"),
+    ]
 
 
 def test_profile_endpoint_changes_email_with_code(monkeypatch):

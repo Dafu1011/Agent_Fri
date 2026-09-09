@@ -35,7 +35,17 @@ ensure_async_postgres_event_loop_policy()
 def _message_content(message: Any) -> str:
     if isinstance(message, BaseMessage):
         content = message.content
-        return content if isinstance(content, str) else str(content)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(str(part.get("text") or ""))
+            return " ".join(part for part in text_parts if part).strip()
+        return str(content)
     return str(message["content"])
 
 
@@ -209,7 +219,7 @@ def get_chat_graph():
     return build_chat_graph()
 
 
-def create_initial_state(message: str, user_id: str, thread_id: str) -> ChatState:
+def create_initial_state(message: str | BaseMessage, user_id: str, thread_id: str) -> ChatState:
     """创建初始聊天状态。
     
     为新的聊天消息构建初始状态对象。
@@ -223,7 +233,7 @@ def create_initial_state(message: str, user_id: str, thread_id: str) -> ChatStat
         初始化的ChatState字典
     """
     return {
-        "messages": [HumanMessage(content=message)],
+        "messages": [message if isinstance(message, BaseMessage) else HumanMessage(content=message)],
         "reply": "",
         "user_id": user_id,
         "thread_id": thread_id,
@@ -247,7 +257,7 @@ def create_thread_config(thread_id: str) -> dict[str, dict[str, str]]:
 
 
 async def run_chat_graph(
-    message: str,
+    message: str | BaseMessage,
     thread_id: str,
     user_id: str,
     graph: Any | None = None,

@@ -22,6 +22,7 @@ from app.agent.graph import (
     build_postgres_checkpointer,
     build_postgres_memory_repository,
 )
+from app.agent.multi_agent.learning import build_postgres_learning_repository
 from app.agent.tools.registry import build_runtime_tools
 from app.auth import build_auth_repository
 from app.config import parse_mcp_servers_json, settings
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
     auth_repository = None
     knowledge_repository = None
     memory_repository = None
+    learning_repository = None
     startup_errors = {}
     document_storage = DocumentStorage(settings.storage_path)
     app.state.document_storage = document_storage
@@ -77,6 +79,16 @@ async def lifespan(app: FastAPI):
         startup_errors["memory"] = str(exc)
         app.state.memory_repository = None
         app.state.memory_status = "disabled"
+
+    try:
+        learning_repository = build_postgres_learning_repository()
+        app.state.learning_repository = learning_repository
+        app.state.learning_status = "postgres"
+    except Exception as exc:
+        logger.exception("Learning repository initialization failed")
+        startup_errors["learning"] = str(exc)
+        app.state.learning_repository = None
+        app.state.learning_status = "disabled"
 
     try:
         knowledge_repository = build_knowledge_repository()
@@ -137,6 +149,7 @@ async def status():
         "persistence": getattr(app.state, "persistence_status", "unknown"),
         "checkpointer": getattr(app.state, "checkpointer_status", "unknown"),
         "memory": getattr(app.state, "memory_status", "unknown"),
+        "learning": getattr(app.state, "learning_status", "unknown"),
         "knowledge": getattr(app.state, "knowledge_status", "unknown"),
         "tools": [getattr(tool, "name", type(tool).__name__) for tool in agent_tools],
         "searxng_configured": bool(settings.searxng_base_url.strip()),

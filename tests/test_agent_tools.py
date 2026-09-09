@@ -40,6 +40,12 @@ async def test_build_document_tools_converts_files_for_current_user():
         message = "已转换为 PDF。"
 
     class FakeService:
+        def __getattr__(self, name):
+            def fake_method(*args, **kwargs):
+                raise AssertionError(f"{name} should not be called")
+
+            return fake_method
+
         def convert(self, *, user_id, file_ids, instruction="", target_format=""):
             assert user_id == "user-1"
             assert file_ids == ["file-1"]
@@ -49,7 +55,19 @@ async def test_build_document_tools_converts_files_for_current_user():
 
     tools = build_document_tools(user_id="user-1", service=FakeService())
 
-    assert [tool.name for tool in tools] == ["convert_uploaded_file"]
+    assert [tool.name for tool in tools] == [
+        "convert_uploaded_file",
+        "word_create",
+        "word_read",
+        "word_format",
+        "word_edit_text",
+        "excel_create",
+        "excel_read",
+        "excel_calculate",
+        "excel_format_table",
+        "pdf_create",
+        "pdf_read",
+    ]
     result = await tools[0].ainvoke(
         {
             "file_ids": ["file-1"],
@@ -60,6 +78,38 @@ async def test_build_document_tools_converts_files_for_current_user():
     assert result == {
         "message": "已转换为 PDF。",
         "attachment": {"file_id": "file-2", "download_url": "/documents/files/file-2/download"},
+    }
+
+
+@pytest.mark.anyio
+async def test_build_document_tools_exposes_specialized_document_tools_for_current_user():
+    class FakeResult:
+        attachment = {"file_id": "file-3", "download_url": "/documents/files/file-3/download"}
+        message = "已创建 Word 文档。"
+
+    class FakeService:
+        def create_word(self, *, user_id, filename="", title="", blocks=None, style=None):
+            assert user_id == "user-1"
+            assert filename == "report.docx"
+            assert title == "Report"
+            assert blocks == [{"type": "paragraph", "text": "Body"}]
+            assert style == {"preset": "chinese_report"}
+            return FakeResult()
+
+    tools = {tool.name: tool for tool in build_document_tools(user_id="user-1", service=FakeService())}
+
+    result = await tools["word_create"].ainvoke(
+        {
+            "filename": "report.docx",
+            "title": "Report",
+            "blocks": [{"type": "paragraph", "text": "Body"}],
+            "style": {"preset": "chinese_report"},
+        }
+    )
+
+    assert result == {
+        "message": "已创建 Word 文档。",
+        "attachment": {"file_id": "file-3", "download_url": "/documents/files/file-3/download"},
     }
 
 

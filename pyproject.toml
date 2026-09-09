@@ -18,6 +18,10 @@ dependencies = [
   "pillow",
   "python-docx",
   "pdf2docx",
+  "openpyxl",
+  "reportlab",
+  "pypdf",
+  "pdfplumber",
 ]
 
 [project.optional-dependencies]

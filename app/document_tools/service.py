@@ -8,8 +8,11 @@ import tempfile
 from app.config import settings
 
 from .engines.image_pdf import ImagePdfConverter
+from .excel import ExcelToolService
+from .pdf import PdfToolService
 from .schemas import ConversionPlan, ConversionResult, DocumentConversionError, StoredDocument
 from .storage import DocumentStorage
+from .word import WordToolService
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -64,6 +67,9 @@ class DocumentConversionService:
     ):
         self.storage = storage
         self.image_pdf_converter = image_pdf_converter or ImagePdfConverter()
+        self.word = WordToolService(storage)
+        self.excel = ExcelToolService(storage)
+        self.pdf = PdfToolService(storage)
 
     def convert(
         self,
@@ -97,6 +103,93 @@ class DocumentConversionService:
         if not files or any(file is None for file in files):
             raise DocumentConversionError("找不到上传文件，请重新上传后再试。", status_code=404)
         return [file for file in files if file is not None]
+
+    def create_word(
+        self,
+        *,
+        user_id: str,
+        filename: str = "",
+        title: str = "",
+        blocks: list[dict] | None = None,
+        style: dict | None = None,
+    ) -> ConversionResult:
+        return self.word.create(user_id=user_id, filename=filename, title=title, blocks=blocks, style=style)
+
+    def read_word(self, *, user_id: str, file_id: str) -> dict:
+        return self.word.read(user_id=user_id, file_id=file_id)
+
+    def edit_word_text(
+        self,
+        *,
+        user_id: str,
+        file_id: str,
+        replacements: list[dict[str, str]],
+        filename: str = "",
+    ) -> ConversionResult:
+        return self.word.edit_text(user_id=user_id, file_id=file_id, replacements=replacements, filename=filename)
+
+    def format_word(
+        self,
+        *,
+        user_id: str,
+        file_id: str,
+        style: dict,
+        filename: str = "",
+    ) -> ConversionResult:
+        return self.word.format(user_id=user_id, file_id=file_id, style=style, filename=filename)
+
+    def create_excel(
+        self,
+        *,
+        user_id: str,
+        filename: str = "",
+        sheets: list[dict] | None = None,
+    ) -> ConversionResult:
+        return self.excel.create(user_id=user_id, filename=filename, sheets=sheets)
+
+    def read_excel(self, *, user_id: str, file_id: str) -> dict:
+        return self.excel.read(user_id=user_id, file_id=file_id)
+
+    def calculate_excel(
+        self,
+        *,
+        user_id: str,
+        file_id: str,
+        operations: list[dict],
+        filename: str = "",
+    ) -> ConversionResult:
+        return self.excel.calculate(user_id=user_id, file_id=file_id, operations=operations, filename=filename)
+
+    def format_excel_table(
+        self,
+        *,
+        user_id: str,
+        file_id: str,
+        sheet: str,
+        range_ref: str,
+        filename: str = "",
+    ) -> ConversionResult:
+        return self.excel.format_table(
+            user_id=user_id,
+            file_id=file_id,
+            sheet=sheet,
+            range_ref=range_ref,
+            filename=filename,
+        )
+
+    def create_pdf(
+        self,
+        *,
+        user_id: str,
+        filename: str = "",
+        title: str = "",
+        blocks: list[dict] | None = None,
+        page: dict | None = None,
+    ) -> ConversionResult:
+        return self.pdf.create(user_id=user_id, filename=filename, title=title, blocks=blocks, page=page)
+
+    def read_pdf(self, *, user_id: str, file_id: str) -> dict:
+        return self.pdf.read(user_id=user_id, file_id=file_id)
 
     def _resolve_executable(self, configured_path: str, *names: str) -> str | None:
         configured = configured_path.strip().strip('"')

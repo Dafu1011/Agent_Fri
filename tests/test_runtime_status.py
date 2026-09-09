@@ -8,6 +8,7 @@ def test_status_endpoint_reports_persistence_and_tool_names(monkeypatch):
     app.state.persistence_status = "postgres"
     app.state.checkpointer_status = "postgres"
     app.state.memory_status = "postgres"
+    app.state.learning_status = "postgres"
     app.state.knowledge_status = "postgres"
     app.state.startup_errors = {}
     app.state.agent_tools = [
@@ -20,9 +21,10 @@ def test_status_endpoint_reports_persistence_and_tool_names(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "persistence": "postgres",
-        "checkpointer": "postgres",
-        "memory": "postgres",
-        "knowledge": "postgres",
+            "checkpointer": "postgres",
+            "memory": "postgres",
+            "learning": "postgres",
+            "knowledge": "postgres",
         "tools": ["web_search"],
         "searxng_configured": True,
         "startup_errors": {},

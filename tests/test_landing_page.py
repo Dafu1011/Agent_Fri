@@ -11,7 +11,7 @@ def test_root_serves_landing_chat_page():
     assert "text/html" in response.headers["content-type"]
     assert '<div id="root"></div>' in response.text
     assert 'data-testid="chat-panel"' in response.text
-    assert 'fetch("/chat"' in response.text
+    assert 'fetch("/chat/stream"' in response.text
     assert "thread_id: threadId" in response.text
     assert "user_id: userId" not in response.text
     assert '"Authorization": `Bearer ${token}`' in response.text
@@ -28,6 +28,42 @@ def test_root_serves_landing_chat_page():
     assert "/profile/email" in response.text
     assert 'fetch("/profile"' in response.text
     assert "window.Motion = window.Motion || window.FramerMotion" in response.text
+
+
+def test_chat_panel_supports_sessions_streaming_and_profile_panel():
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert "async function refreshThreads" in response.text
+    assert "async function startNewThread" in response.text
+    assert 'fetch("/threads"' in response.text
+    assert "setThreads(data.threads || [])" in response.text
+    assert 'fetch("/chat/stream"' in response.text
+    assert "readChatStream" in response.text
+    assert "event: message_delta" in response.text
+    assert "setActivePanel(\"profile\")" in response.text
+    assert "activePanel === \"profile\"" in response.text
+    assert "ProfilePanel" in response.text
+    assert "New chat" in response.text
+
+
+def test_chat_panel_moves_sessions_into_collapsible_sidebar():
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert "sidebarOpen" in response.text
+    assert "toggle conversation sidebar" in response.text
+    assert "function ThreadSidebar" in response.text
+    assert "<ThreadSidebar" in response.text
+    assert "startNewThread" in response.text
+    assert "renameThread" in response.text
+    assert "toggleThreadPin" in response.text
+    assert "deleteThread" in response.text
+    assert 'fetch(`/threads/${thread.id}`' in response.text
+    assert 'fetch(`/threads/${thread.id}/pin`' in response.text
+    assert 'fetch(`/threads/${thread.id}`,' in response.text
+    assert "Default chat" not in response.text
+    assert "thread.title || summarizeThreadPreview(thread) || \"New chat\"" in response.text
 
 
 def test_hero_centers_chat_without_marketing_copy():
@@ -85,7 +121,7 @@ def test_chat_messages_render_media_attachments():
     assert "<video controls" in response.text
     assert "attachment.media_type === \"image_gallery\"" in response.text
     assert "<PhotoStack images={attachment.images} title={attachment.title} sourceImages={attachment.source_images} />" in response.text
-    assert "data.attachments || []" in response.text
+    assert "payload.attachments || []" in response.text
     assert "function MediaVideo({ attachment })" in response.text
     assert "onError={() => setFailed(true)}" in response.text
     assert "attachment.source_url" in response.text

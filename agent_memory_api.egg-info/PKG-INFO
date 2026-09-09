@@ -17,6 +17,10 @@ Requires-Dist: imageio-ffmpeg
 Requires-Dist: pillow
 Requires-Dist: python-docx
 Requires-Dist: pdf2docx
+Requires-Dist: openpyxl
+Requires-Dist: reportlab
+Requires-Dist: pypdf
+Requires-Dist: pdfplumber
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 Provides-Extra: tools

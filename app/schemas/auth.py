@@ -33,6 +33,14 @@ class ThreadCreateRequest(BaseModel):
     title: str | None = None
 
 
+class ThreadUpdateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+
+
+class ThreadPinRequest(BaseModel):
+    pinned: bool
+
+
 class ThreadResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +49,7 @@ class ThreadResponse(BaseModel):
     title: str | None
     created_at: str
     updated_at: str
+    pinned_at: str | None = None
 
 
 class ThreadListResponse(BaseModel):

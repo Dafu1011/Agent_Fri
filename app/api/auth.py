@@ -1,7 +1,7 @@
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
@@ -17,7 +17,9 @@ from app.schemas.auth import (
     ProfileResponse,
     ThreadCreateRequest,
     ThreadListResponse,
+    ThreadPinRequest,
     ThreadResponse,
+    ThreadUpdateRequest,
 )
 
 router = APIRouter(tags=["auth"])
@@ -145,6 +147,33 @@ async def create_thread(payload: ThreadCreateRequest, request: Request) -> Threa
 async def list_threads(request: Request) -> ThreadListResponse:
     user_id = get_current_user_id(request)
     return ThreadListResponse(threads=get_auth_repository(request).list_threads(user_id))
+
+
+@router.patch("/threads/{thread_id}", response_model=ThreadResponse)
+async def rename_thread(thread_id: str, payload: ThreadUpdateRequest, request: Request) -> ThreadResponse:
+    user_id = get_current_user_id(request)
+    thread = get_auth_repository(request).rename_thread(user_id, thread_id, payload.title)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return thread
+
+
+@router.patch("/threads/{thread_id}/pin", response_model=ThreadResponse)
+async def set_thread_pin(thread_id: str, payload: ThreadPinRequest, request: Request) -> ThreadResponse:
+    user_id = get_current_user_id(request)
+    thread = get_auth_repository(request).set_thread_pinned(user_id, thread_id, payload.pinned)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return thread
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+async def delete_thread(thread_id: str, request: Request) -> Response:
+    user_id = get_current_user_id(request)
+    deleted = get_auth_repository(request).delete_thread(user_id, thread_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return Response(status_code=204)
 
 
 @router.get("/profile", response_model=ProfileResponse)

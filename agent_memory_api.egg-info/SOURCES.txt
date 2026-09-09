@@ -32,6 +32,7 @@ app/api/memory.py
 app/db/postgres.py
 app/document_tools/__init__.py
 app/document_tools/chat.py
+app/document_tools/common.py
 app/document_tools/schemas.py
 app/document_tools/service.py
 app/document_tools/storage.py
@@ -39,6 +40,12 @@ app/document_tools/api/__init__.py
 app/document_tools/api/document_router.py
 app/document_tools/engines/__init__.py
 app/document_tools/engines/image_pdf.py
+app/document_tools/excel/__init__.py
+app/document_tools/excel/service.py
+app/document_tools/pdf/__init__.py
+app/document_tools/pdf/service.py
+app/document_tools/word/__init__.py
+app/document_tools/word/service.py
 app/image_generation/__init__.py
 app/image_generation/chat.py
 app/image_generation/jobs.py

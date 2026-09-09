@@ -70,6 +70,18 @@ class ChatThread:
     title: str | None
     created_at: str
     updated_at: str
+    pinned_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ChatStoredMessage:
+    id: str
+    thread_id: str
+    user_id: str
+    role: str
+    text: str
+    attachments: list[dict[str, Any]]
+    created_at: str
 
 
 class AuthRepository:
@@ -124,8 +136,25 @@ class AuthRepository:
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     title TEXT,
+                    pinned_at TIMESTAMPTZ,
+                    deleted_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            connection.execute("ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ")
+            connection.execute("ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    text TEXT NOT NULL,
+                    attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -159,6 +188,9 @@ class AuthRepository:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_threads_user_updated ON chat_threads(user_id, updated_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_created ON chat_messages(thread_id, created_at ASC)"
             )
             connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email)) WHERE email IS NOT NULL"
@@ -304,7 +336,7 @@ class AuthRepository:
                 """
                 INSERT INTO chat_threads (id, user_id, title, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, user_id, title, created_at, updated_at
+                RETURNING id, user_id, title, created_at, updated_at, pinned_at
                 """,
                 (thread_id, user_id, title, now, now),
             ).fetchone()
@@ -316,7 +348,7 @@ class AuthRepository:
                 """
                 SELECT id
                 FROM chat_threads
-                WHERE id = %s AND user_id = %s
+                WHERE id = %s AND user_id = %s AND deleted_at IS NULL
                 LIMIT 1
                 """,
                 (thread_id, user_id),
@@ -327,15 +359,136 @@ class AuthRepository:
         with self.connection_factory() as connection:
             rows = connection.execute(
                 """
-                SELECT id, user_id, title, created_at, updated_at
+                SELECT id, user_id, title, created_at, updated_at, pinned_at
                 FROM chat_threads
-                WHERE user_id = %s
-                ORDER BY updated_at DESC
+                WHERE user_id = %s AND deleted_at IS NULL
+                ORDER BY
+                    CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC,
+                    pinned_at DESC,
+                    updated_at DESC
                 LIMIT %s
                 """,
                 (user_id, limit),
             ).fetchall()
         return [self._thread_from_row(row) for row in rows]
+
+    def rename_thread(self, user_id: str, thread_id: str, title: str) -> ChatThread | None:
+        now = _utc_now()
+        clean_title = " ".join(title.split())[:80]
+        if not clean_title:
+            clean_title = "New chat"
+        with self.connection_factory() as connection:
+            row = connection.execute(
+                """
+                UPDATE chat_threads
+                SET title = %s,
+                    updated_at = %s
+                WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+                RETURNING id, user_id, title, created_at, updated_at, pinned_at
+                """,
+                (clean_title, now, thread_id, user_id),
+            ).fetchone()
+        return self._thread_from_row(row) if row is not None else None
+
+    def set_thread_pinned(self, user_id: str, thread_id: str, pinned: bool) -> ChatThread | None:
+        now = _utc_now()
+        with self.connection_factory() as connection:
+            row = connection.execute(
+                """
+                UPDATE chat_threads
+                SET pinned_at = %s,
+                    updated_at = %s
+                WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+                RETURNING id, user_id, title, created_at, updated_at, pinned_at
+                """,
+                (now if pinned else None, now, thread_id, user_id),
+            ).fetchone()
+        return self._thread_from_row(row) if row is not None else None
+
+    def delete_thread(self, user_id: str, thread_id: str) -> bool:
+        now = _utc_now()
+        with self.connection_factory() as connection:
+            row = connection.execute(
+                """
+                UPDATE chat_threads
+                SET deleted_at = %s,
+                    updated_at = %s
+                WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+                RETURNING id, user_id, title, created_at, updated_at, pinned_at
+                """,
+                (now, now, thread_id, user_id),
+            ).fetchone()
+        return row is not None
+
+    def save_thread_message(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        role: str,
+        text: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> ChatStoredMessage:
+        from psycopg.types.json import Jsonb
+
+        if role not in {"user", "assistant"}:
+            raise ValueError("role must be user or assistant")
+        now = _utc_now()
+        message_id = f"msg-{secrets.token_urlsafe(16)}"
+        safe_attachments = attachments or []
+        with self.connection_factory() as connection:
+            row = connection.execute(
+                """
+                INSERT INTO chat_messages (
+                    id, thread_id, user_id, role, text, attachments, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, thread_id, user_id, role, text, attachments, created_at
+                """,
+                (
+                    message_id,
+                    thread_id,
+                    user_id,
+                    role,
+                    text,
+                    Jsonb(safe_attachments),
+                    now,
+                ),
+            ).fetchone()
+            connection.execute(
+                """
+                UPDATE chat_threads
+                SET updated_at = %s,
+                    title = COALESCE(title, %s)
+                WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+                """,
+                (
+                    now,
+                    _thread_title_from_message(text) if role == "user" else None,
+                    thread_id,
+                    user_id,
+                ),
+            )
+        return self._stored_message_from_row(row)
+
+    def list_thread_messages(
+        self,
+        user_id: str,
+        thread_id: str,
+        limit: int = 200,
+    ) -> list[ChatStoredMessage]:
+        with self.connection_factory() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, thread_id, user_id, role, text, attachments, created_at
+                FROM chat_messages
+                WHERE user_id = %s AND thread_id = %s
+                ORDER BY created_at ASC
+                LIMIT %s
+                """,
+                (user_id, thread_id, limit),
+            ).fetchall()
+        return [self._stored_message_from_row(row) for row in rows]
 
     def get_profile(self, user_id: str) -> dict[str, Any]:
         with self.connection_factory() as connection:
@@ -448,7 +601,24 @@ class AuthRepository:
             title=row[2],
             created_at=str(row[3]),
             updated_at=str(row[4]),
+            pinned_at=str(row[5]) if len(row) > 5 and row[5] is not None else None,
         )
+
+    def _stored_message_from_row(self, row: Any) -> ChatStoredMessage:
+        return ChatStoredMessage(
+            id=row[0],
+            thread_id=row[1],
+            user_id=row[2],
+            role=row[3],
+            text=row[4],
+            attachments=list(row[5] or []),
+            created_at=str(row[6]),
+        )
+
+
+def _thread_title_from_message(text: str) -> str:
+    compact = " ".join(text.split())
+    return compact[:40] if compact else "New chat"
 
 
 def build_auth_repository() -> AuthRepository:
