@@ -14,6 +14,9 @@ class ToolSpec:
     risk_level: str = "low"
     owner_worker: str = "general_worker"
     requires_confirmation: bool = False
+    input_types: list[str] | None = None
+    output_types: list[str] | None = None
+    estimated_latency_ms: int = 1000
 
 
 KNOWN_TOOL_METADATA: dict[str, dict[str, Any]] = {
@@ -22,90 +25,144 @@ KNOWN_TOOL_METADATA: dict[str, dict[str, Any]] = {
         "capability": "search_web",
         "owner_worker": "research_worker",
         "risk_level": "low",
+        "input_types": ["text"],
+        "output_types": ["text"],
+        "estimated_latency_ms": 2500,
     },
     "get_current_weather": {
         "domain": "research",
         "capability": "get_weather",
         "owner_worker": "research_worker",
         "risk_level": "low",
+        "input_types": ["text"],
+        "output_types": ["text"],
+        "estimated_latency_ms": 1000,
     },
     "parse_social_media_link": {
         "domain": "media",
         "capability": "parse_public_link",
         "owner_worker": "media_worker",
         "risk_level": "low",
+        "input_types": ["url"],
+        "output_types": ["video", "image_gallery", "metadata"],
+        "estimated_latency_ms": 4000,
     },
     "generate_image": {
         "domain": "image",
         "capability": "generate_asset",
         "owner_worker": "image_worker",
         "risk_level": "medium",
+        "input_types": ["text"],
+        "output_types": ["image"],
+        "estimated_latency_ms": 15000,
     },
     "convert_uploaded_file": {
         "domain": "document",
         "capability": "convert_file",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["file"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 3000,
+    },
+    "ingest_uploaded_files_to_knowledge": {
+        "domain": "document",
+        "capability": "ingest_to_knowledge",
+        "owner_worker": "document_worker",
+        "risk_level": "medium",
+        "input_types": ["file", "text"],
+        "output_types": ["knowledge_document"],
+        "estimated_latency_ms": 3000,
     },
     "word_create": {
         "domain": "document",
         "capability": "create_docx",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["text"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 3000,
     },
     "word_read": {
         "domain": "document",
         "capability": "read_docx",
         "owner_worker": "document_worker",
         "risk_level": "low",
+        "input_types": ["file"],
+        "output_types": ["text"],
+        "estimated_latency_ms": 1000,
     },
     "word_format": {
         "domain": "document",
         "capability": "format_docx",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["file"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 2500,
     },
     "word_edit_text": {
         "domain": "document",
         "capability": "edit_docx",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["file", "text"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 2500,
     },
     "excel_create": {
         "domain": "spreadsheet",
         "capability": "create_xlsx",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["text"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 3000,
     },
     "excel_read": {
         "domain": "spreadsheet",
         "capability": "read_xlsx",
         "owner_worker": "document_worker",
         "risk_level": "low",
+        "input_types": ["file"],
+        "output_types": ["text"],
+        "estimated_latency_ms": 1000,
     },
     "excel_calculate": {
         "domain": "spreadsheet",
         "capability": "calculate_xlsx",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["file", "text"],
+        "output_types": ["text"],
+        "estimated_latency_ms": 1500,
     },
     "excel_format_table": {
         "domain": "spreadsheet",
         "capability": "format_xlsx_table",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["file"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 2000,
     },
     "pdf_create": {
         "domain": "document",
         "capability": "create_pdf",
         "owner_worker": "document_worker",
         "risk_level": "medium",
+        "input_types": ["text"],
+        "output_types": ["file"],
+        "estimated_latency_ms": 3000,
     },
     "pdf_read": {
         "domain": "document",
         "capability": "read_pdf",
         "owner_worker": "document_worker",
         "risk_level": "low",
+        "input_types": ["file"],
+        "output_types": ["text"],
+        "estimated_latency_ms": 1000,
     },
 }
 
@@ -142,6 +199,9 @@ class ToolCatalog:
                 "risk_level": spec.risk_level,
                 "owner_worker": spec.owner_worker,
                 "requires_confirmation": spec.requires_confirmation,
+                "input_types": spec.input_types or ["text"],
+                "output_types": spec.output_types or ["text"],
+                "estimated_latency_ms": spec.estimated_latency_ms,
             }
             for spec in self.specs
         ]
@@ -152,7 +212,7 @@ def build_tool_catalog(tools: list[Any]) -> ToolCatalog:
 
 
 def _build_tool_spec(tool: Any) -> ToolSpec:
-    name = str(getattr(tool, "name", type(tool).__name__))
+    name = tool if isinstance(tool, str) else str(getattr(tool, "name", type(tool).__name__))
     metadata = KNOWN_TOOL_METADATA.get(name, {})
     description = str(getattr(tool, "description", "") or "")
     return ToolSpec(
@@ -164,4 +224,7 @@ def _build_tool_spec(tool: Any) -> ToolSpec:
         risk_level=str(metadata.get("risk_level", "low")),
         owner_worker=str(metadata.get("owner_worker", "general_worker")),
         requires_confirmation=bool(metadata.get("requires_confirmation", False)),
+        input_types=list(metadata.get("input_types", ["text"])),
+        output_types=list(metadata.get("output_types", ["text"])),
+        estimated_latency_ms=int(metadata.get("estimated_latency_ms", 1000)),
     )

@@ -7,9 +7,16 @@ from langchain_core.tools import tool
 from app.document_tools.service import DocumentConversionService
 
 
-def build_document_tools(user_id: str, service: DocumentConversionService) -> list[Any]:
+def build_document_tools(
+    user_id: str,
+    service: DocumentConversionService,
+    knowledge_ingestion_service: Any | None = None,
+) -> list[Any]:
     def result_payload(result: Any) -> dict[str, Any]:
         return {"message": result.message, "attachment": result.attachment}
+
+    def ingestion_payload(result: Any) -> dict[str, Any]:
+        return {"message": result.reply, "attachments": result.attachments}
 
     @tool("convert_uploaded_file")
     async def convert_uploaded_file(
@@ -144,7 +151,7 @@ def build_document_tools(user_id: str, service: DocumentConversionService) -> li
         """Extract text from a PDF file owned by the current user."""
         return service.read_pdf(user_id=user_id, file_id=file_id)
 
-    return [
+    tools = [
         convert_uploaded_file,
         word_create,
         word_read,
@@ -157,3 +164,23 @@ def build_document_tools(user_id: str, service: DocumentConversionService) -> li
         pdf_create,
         pdf_read,
     ]
+    if knowledge_ingestion_service is not None:
+
+        @tool("ingest_uploaded_files_to_knowledge")
+        async def ingest_uploaded_files_to_knowledge(
+            file_ids: list[str],
+            instruction: str = "",
+            visibility: str = "private",
+        ) -> dict[str, Any]:
+            """Parse uploaded files owned by the current user into the persistent knowledge base."""
+            return ingestion_payload(
+                knowledge_ingestion_service.ingest_files(
+                    user_id=user_id,
+                    file_ids=file_ids,
+                    instruction=instruction,
+                    visibility=visibility,
+                )
+            )
+
+        tools.append(ingest_uploaded_files_to_knowledge)
+    return tools

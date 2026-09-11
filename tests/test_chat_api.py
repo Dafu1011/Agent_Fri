@@ -46,7 +46,7 @@ def test_chat_endpoint_returns_model_reply(monkeypatch):
     }
 
 
-def test_chat_endpoint_adds_user_document_tools_to_model_tools(monkeypatch):
+def test_chat_endpoint_keeps_simple_chat_tool_list_empty(monkeypatch):
     monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
     monkeypatch.setattr(
         "app.api.chat.get_auth_repository",
@@ -75,7 +75,7 @@ def test_chat_endpoint_adds_user_document_tools_to_model_tools(monkeypatch):
         knowledge_repository=None,
         tools=None,
     ):
-        assert tools == ["base-tool", "document-tool", "image-tool"]
+        assert tools == []
         return "模型回复"
 
     def fake_build_document_tools(user_id, service):
@@ -122,6 +122,147 @@ def test_chat_endpoint_adds_user_document_tools_to_model_tools(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"reply": "模型回复", "attachments": []}
+
+
+def test_chat_endpoint_filters_tools_and_skips_memory_when_router_says_fast_path(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: True},
+        )(),
+    )
+
+    class ExplodingMemoryRepository:
+        def search_memories(self, *args, **kwargs):
+            raise AssertionError("memory search should be skipped for fast path")
+
+    async def fake_parse_document_message(*args, **kwargs):
+        return None
+
+    async def fake_parse_media_message(*args, **kwargs):
+        return None
+
+    async def fake_parse_image_generation_message(*args, **kwargs):
+        return None
+
+    async def fake_decide_route(*args, **kwargs):
+        return type(
+            "Decision",
+            (),
+            {
+                "path": "simple_chat",
+                "intent": "image_prompt_reverse",
+                "worker": "vision_worker",
+                "tool_names": [],
+                "needs_memory": False,
+                "needs_knowledge": False,
+                "reason": "fast vision answer",
+            },
+        )()
+
+    async def fake_run_chat_graph(
+        message,
+        thread_id,
+        user_id,
+        graph=None,
+        memory_repository=None,
+        knowledge_repository=None,
+        tools=None,
+    ):
+        assert memory_repository is None
+        assert knowledge_repository is None
+        assert tools == []
+        return "这是反推提示词。"
+
+    app.state.memory_repository = ExplodingMemoryRepository()
+    app.state.knowledge_repository = ExplodingMemoryRepository()
+    monkeypatch.setattr("app.api.chat.parse_document_message", fake_parse_document_message)
+    monkeypatch.setattr("app.api.chat.parse_media_message", fake_parse_media_message)
+    monkeypatch.setattr("app.api.chat.parse_image_generation_message", fake_parse_image_generation_message, raising=False)
+    monkeypatch.setattr("app.api.chat.decide_route", fake_decide_route, raising=False)
+    monkeypatch.setattr("app.api.chat.run_chat_graph", fake_run_chat_graph)
+
+    client = TestClient(app)
+    response = client.post(
+        "/chat",
+        json={"thread_id": "thread-1", "message": "反推图片提示词"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "这是反推提示词。", "attachments": []}
+
+
+def test_chat_endpoint_uses_router_selected_tools_for_direct_tool_path(monkeypatch):
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+    monkeypatch.setattr(
+        "app.api.chat.get_auth_repository",
+        lambda request: type(
+            "Repo",
+            (),
+            {"thread_belongs_to_user": lambda self, thread_id, user_id: True},
+        )(),
+    )
+
+    async def fake_parse_document_message(*args, **kwargs):
+        return None
+
+    async def fake_parse_media_message(*args, **kwargs):
+        return None
+
+    async def fake_parse_image_generation_message(*args, **kwargs):
+        return None
+
+    async def fake_decide_route(*args, **kwargs):
+        return type(
+            "Decision",
+            (),
+            {
+                "path": "direct_tool",
+                "intent": "image_generation",
+                "worker": "image_worker",
+                "tool_names": ["generate_image"],
+                "needs_memory": False,
+                "needs_knowledge": False,
+                "reason": "use selected image tool",
+            },
+        )()
+
+    class FakeTool:
+        name = "generate_image"
+        description = "Generate an image."
+
+    async def fake_run_chat_graph(
+        message,
+        thread_id,
+        user_id,
+        graph=None,
+        memory_repository=None,
+        knowledge_repository=None,
+        tools=None,
+    ):
+        assert [tool.name for tool in tools] == ["generate_image"]
+        return "已调用图片工具。"
+
+    app.state.agent_tools = [FakeTool()]
+    monkeypatch.setattr("app.api.chat.parse_document_message", fake_parse_document_message)
+    monkeypatch.setattr("app.api.chat.parse_media_message", fake_parse_media_message)
+    monkeypatch.setattr("app.api.chat.parse_image_generation_message", fake_parse_image_generation_message, raising=False)
+    monkeypatch.setattr("app.api.chat.decide_route", fake_decide_route, raising=False)
+    monkeypatch.setattr("app.api.chat.run_chat_graph", fake_run_chat_graph)
+    monkeypatch.setattr("app.api.chat.build_document_tools", lambda *args: [], raising=False)
+    monkeypatch.setattr("app.api.chat.build_image_generation_tools", lambda *args: [], raising=False)
+
+    client = TestClient(app)
+    response = client.post(
+        "/chat",
+        json={"thread_id": "thread-1", "message": "生成图片"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "已调用图片工具。", "attachments": []}
 
 
 def test_chat_endpoint_passes_uploaded_images_to_simple_chat_graph(monkeypatch, tmp_path):
@@ -307,6 +448,23 @@ def test_chat_endpoint_passes_context_to_multi_agent(monkeypatch):
     monkeypatch.setattr("app.api.chat.run_multi_agent_graph_with_result", fake_run_multi_agent_graph_with_result)
     app.state.memory_repository = FakeMemoryRepository()
     app.state.knowledge_repository = FakeKnowledgeRepository()
+
+    async def fake_decide_route(*args, **kwargs):
+        return type(
+            "Decision",
+            (),
+            {
+                "path": "multi_agent",
+                "intent": "research_document_task",
+                "worker": "document_worker",
+                "tool_names": [],
+                "needs_memory": True,
+                "needs_knowledge": True,
+                "reason": "needs both contexts",
+            },
+        )()
+
+    monkeypatch.setattr("app.api.chat.decide_route", fake_decide_route, raising=False)
 
     client = TestClient(app)
     response = client.post(
@@ -871,3 +1029,57 @@ def test_chat_stream_endpoint_emits_sse_chunks_and_done(monkeypatch):
     assert 'event: attachments' in body
     assert 'data: {"attachments":[{"media_type":"file"}]}' in body
     assert "event: done" in body
+
+
+def test_chat_endpoint_ingests_uploaded_file_to_knowledge_before_model_routing(monkeypatch, tmp_path):
+    saved_messages = []
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("Project facts", encoding="utf-8")
+
+    monkeypatch.setattr("app.api.chat.get_current_user_id", lambda request: "user-1")
+
+    class FakeRepository:
+        def thread_belongs_to_user(self, thread_id, user_id):
+            return True
+
+        def save_thread_message(self, **kwargs):
+            saved_messages.append(kwargs)
+
+    class FakeStorage:
+        def get_file(self, user_id, file_id):
+            return type(
+                "Stored",
+                (),
+                {
+                    "file_id": "file-1",
+                    "user_id": "user-1",
+                    "filename": "notes.txt",
+                    "mime_type": "text/plain",
+                    "size_bytes": 13,
+                    "path": file_path,
+                    "kind": "upload",
+                },
+            )()
+
+    class FakeKnowledgeRepository:
+        def add_document(self, **kwargs):
+            assert kwargs["content"] == "Project facts"
+            return type("Doc", (), {"id": "doc-1", "title": "notes.txt"})()
+
+    async def fail_run_chat_graph(*args, **kwargs):
+        raise AssertionError("explicit ingestion should return before model routing")
+
+    app.state.document_conversion_service = type("DocumentService", (), {"storage": FakeStorage()})()
+    app.state.knowledge_repository = FakeKnowledgeRepository()
+    monkeypatch.setattr("app.api.chat.get_auth_repository", lambda request: FakeRepository())
+    monkeypatch.setattr("app.api.chat.run_chat_graph", fail_run_chat_graph)
+
+    response = TestClient(app).post(
+        "/chat",
+        json={"thread_id": "thread-1", "message": "把这个文件解析到知识库", "file_ids": ["file-1"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["attachments"][0]["platform"] == "knowledge"
+    assert response.json()["attachments"][0]["document_id"] == "doc-1"
+    assert saved_messages[-1]["attachments"][0]["status"] == "ingested"

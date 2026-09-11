@@ -8,6 +8,7 @@ from app.agent.multi_agent.graph import (
     run_multi_agent_graph_with_result,
 )
 from app.agent.multi_agent.learning import InMemoryLearningRepository, PostgresLearningRepository
+from app.agent.multi_agent.model_router import InputAttachment, decide_route
 from app.agent.multi_agent.router import classify_task_route
 from app.agent.tools.catalog import build_tool_catalog
 
@@ -47,6 +48,57 @@ def test_classify_task_route_sends_multi_step_document_task_to_multi_agent():
     assert route.path == "multi_agent"
     assert route.complexity == "high"
     assert "document" in route.domains
+
+
+@pytest.mark.anyio
+async def test_model_router_parses_model_json_decision(monkeypatch):
+    catalog = build_tool_catalog([fake_generate_image])
+
+    async def fake_generate_model_message(messages, memories=None, knowledge=None, tools=None):
+        return AIMessage(
+            content=(
+                '{"path":"direct_tool","intent":"image_generation","worker":"image_worker",'
+                '"tool_names":["generate_image"],"needs_memory":false,'
+                '"needs_knowledge":false,"confidence":0.91,"reason":"需要生成图片"}'
+            )
+        )
+
+    monkeypatch.setattr(
+        "app.agent.multi_agent.model_router.generate_model_message",
+        fake_generate_model_message,
+    )
+
+    decision = await decide_route("帮我生成一张猫咖海报", attachments=[], tool_catalog=catalog)
+
+    assert decision.path == "direct_tool"
+    assert decision.worker == "image_worker"
+    assert decision.tool_names == ["generate_image"]
+    assert decision.needs_memory is False
+
+
+@pytest.mark.anyio
+async def test_model_router_fallback_keeps_reverse_image_prompt_on_fast_vision_path(monkeypatch):
+    async def fail_generate_model_message(*args, **kwargs):
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    monkeypatch.setattr(
+        "app.agent.multi_agent.model_router.generate_model_message",
+        fail_generate_model_message,
+    )
+    catalog = build_tool_catalog([fake_generate_image])
+
+    decision = await decide_route(
+        "反推图片提示词",
+        attachments=[InputAttachment(file_id="file-1", filename="sample.png", mime_type="image/png")],
+        tool_catalog=catalog,
+    )
+
+    assert decision.path == "simple_chat"
+    assert decision.intent == "image_prompt_reverse"
+    assert decision.worker == "vision_worker"
+    assert decision.tool_names == []
+    assert decision.needs_memory is False
+    assert decision.needs_knowledge is False
 
 
 @pytest.mark.anyio

@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.graph import get_thread_messages, run_chat_graph
 from app.agent.multi_agent.graph import build_multi_agent_graph, run_multi_agent_graph_with_result
 from app.agent.multi_agent.learning import InMemoryLearningRepository
-from app.agent.multi_agent.router import classify_task_route
+from app.agent.multi_agent.model_router import InputAttachment, decide_route
 from app.agent.tools.catalog import build_tool_catalog
 from app.agent.tools.documents import build_document_tools
 from app.agent.tools.images import build_image_generation_tools
@@ -18,6 +18,7 @@ from app.document_tools.api.document_router import get_document_conversion_servi
 from app.document_tools.chat import parse_document_message
 from app.image_generation.api.image_router import get_image_generation_job_store, get_image_generation_service
 from app.image_generation.chat import parse_image_generation_message
+from app.knowledge_ingestion import KnowledgeIngestionService, is_knowledge_ingestion_request
 from app.media_downloader.chat import parse_media_message
 from app.schemas.chat import ChatHistoryResponse, ChatRequest, ChatResponse
 
@@ -77,6 +78,24 @@ async def handle_chat_request(
         attachments=_uploaded_file_attachments(user_id, request.file_ids, document_service),
     )
 
+    knowledge_ingestion_response = await parse_knowledge_ingestion_message(
+        request.message,
+        request.file_ids,
+        user_id,
+        document_service,
+        getattr(fastapi_request.app.state, "knowledge_repository", None),
+    )
+    if knowledge_ingestion_response is not None:
+        _save_chat_message(
+            auth_repository,
+            user_id=user_id,
+            thread_id=request.thread_id,
+            role="assistant",
+            text=knowledge_ingestion_response["reply"],
+            attachments=knowledge_ingestion_response.get("attachments", []),
+        )
+        return knowledge_ingestion_response
+
     document_response = await parse_document_message(
         request.message,
         request.file_ids,
@@ -133,10 +152,11 @@ async def handle_chat_request(
         *build_document_tools(user_id, document_service),
         *build_image_generation_tools(user_id, image_generation_service),
     ]
-    route = classify_task_route(
+    tool_catalog = build_tool_catalog(tools)
+    route = await decide_route(
         request.message,
-        file_ids=request.file_ids,
-        available_tool_names=[getattr(tool, "name", type(tool).__name__) for tool in tools],
+        attachments=_input_attachments(user_id, request.file_ids, document_service),
+        tool_catalog=tool_catalog,
     )
     try:
         if route.path == "multi_agent":
@@ -146,7 +166,7 @@ async def handle_chat_request(
                     query=request.message,
                     limit=5,
                 )
-                if memory_repository is not None
+                if route.needs_memory and memory_repository is not None
                 else []
             )
             knowledge = (
@@ -155,7 +175,7 @@ async def handle_chat_request(
                     query=request.message,
                     limit=5,
                 )
-                if knowledge_repository is not None
+                if route.needs_knowledge and knowledge_repository is not None
                 else []
             )
             learning_repository = getattr(
@@ -167,7 +187,7 @@ async def handle_chat_request(
                 learning_repository = InMemoryLearningRepository()
                 fastapi_request.app.state.learning_repository = learning_repository
             multi_agent_graph = build_multi_agent_graph(
-                tool_catalog=build_tool_catalog(tools),
+                tool_catalog=tool_catalog,
                 learning_repository=learning_repository,
             )
             result = await run_multi_agent_graph_with_result(
@@ -188,14 +208,15 @@ async def handle_chat_request(
                 attachments=result.attachments,
             )
             return response
+        selected_tools = tool_catalog.select_names(route.tool_names)
         reply = await run_chat_graph(
             _chat_graph_user_message(request.message, user_id, request.file_ids, document_service),
             thread_id=request.thread_id,
             user_id=user_id,
             graph=graph,
-            memory_repository=memory_repository,
-            knowledge_repository=knowledge_repository,
-            tools=tools,
+            memory_repository=memory_repository if route.needs_memory else None,
+            knowledge_repository=knowledge_repository if route.needs_knowledge else None,
+            tools=selected_tools,
         )
     except RuntimeError as exc:
         if "OPENAI_API_KEY is not configured" in str(exc):
@@ -213,6 +234,34 @@ async def handle_chat_request(
         attachments=[],
     )
     return {"reply": reply, "attachments": []}
+
+
+async def parse_knowledge_ingestion_message(
+    message: str,
+    file_ids: list[str],
+    user_id: str,
+    document_service: Any,
+    knowledge_repository: Any,
+) -> dict[str, Any] | None:
+    if not is_knowledge_ingestion_request(message, file_ids):
+        return None
+    if knowledge_repository is None:
+        return {
+            "reply": "知识库暂不可用，文件没有入库。请检查数据库或 embedding 配置后再试。",
+            "attachments": [],
+        }
+    storage = getattr(document_service, "storage", None)
+    if storage is None:
+        return {
+            "reply": "文件存储暂不可用，文件没有入库。",
+            "attachments": [],
+        }
+    result = KnowledgeIngestionService(
+        storage=storage,
+        document_service=document_service,
+        knowledge_repository=knowledge_repository,
+    ).ingest_files(user_id=user_id, file_ids=file_ids, instruction=message)
+    return {"reply": result.reply, "attachments": result.attachments}
 
 
 @router.get("/{thread_id}", response_model=ChatHistoryResponse)
@@ -334,6 +383,30 @@ def _uploaded_image_message_parts(
         image_url = f"data:{stored.mime_type};base64,{base64.b64encode(content).decode('ascii')}"
         parts.append({"type": "image_url", "image_url": {"url": image_url}})
     return parts
+
+
+def _input_attachments(
+    user_id: str,
+    file_ids: list[str],
+    document_service: Any,
+) -> list[InputAttachment]:
+    storage = getattr(document_service, "storage", None)
+    if storage is None:
+        return []
+    attachments: list[InputAttachment] = []
+    for file_id in file_ids:
+        stored = storage.get_file(user_id, file_id)
+        if stored is None:
+            continue
+        attachments.append(
+            InputAttachment(
+                file_id=stored.file_id,
+                filename=stored.filename,
+                mime_type=stored.mime_type,
+                size_bytes=stored.size_bytes,
+            )
+        )
+    return attachments
 
 
 def _sse_event(event: str, payload: dict[str, Any]) -> str:

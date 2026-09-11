@@ -114,6 +114,39 @@ async def test_build_document_tools_exposes_specialized_document_tools_for_curre
 
 
 @pytest.mark.anyio
+async def test_build_document_tools_ingests_files_to_knowledge_for_current_user():
+    class FakeResponse:
+        reply = "已将 1 个文件解析到知识库。"
+        attachments = [{"platform": "knowledge", "document_id": "doc-1"}]
+
+    class FakeIngestionService:
+        def ingest_files(self, *, user_id, file_ids, instruction="", visibility="private"):
+            assert user_id == "user-1"
+            assert file_ids == ["file-1"]
+            assert instruction == "解析到知识库"
+            assert visibility == "private"
+            return FakeResponse()
+
+    tools = {
+        tool.name: tool
+        for tool in build_document_tools(
+            user_id="user-1",
+            service=type("DocumentService", (), {})(),
+            knowledge_ingestion_service=FakeIngestionService(),
+        )
+    }
+
+    result = await tools["ingest_uploaded_files_to_knowledge"].ainvoke(
+        {"file_ids": ["file-1"], "instruction": "解析到知识库"}
+    )
+
+    assert result == {
+        "message": "已将 1 个文件解析到知识库。",
+        "attachments": [{"platform": "knowledge", "document_id": "doc-1"}],
+    }
+
+
+@pytest.mark.anyio
 async def test_build_image_generation_tools_generates_images_for_current_user():
     class FakeResult:
         attachments = [{"image_id": "img-1", "image_url": "/images/files/img-1"}]

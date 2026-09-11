@@ -1,4 +1,8 @@
 from app.document_tools.schemas import StoredDocument
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.api.knowledge import router as knowledge_router
 from app.knowledge_ingestion import (
     FileTextExtractor,
     KnowledgeIngestionService,
@@ -85,3 +89,32 @@ def test_ingestion_service_reports_missing_and_unsupported_files(tmp_path):
     assert [item.status for item in response.results] == ["failed", "failed"]
     assert "找不到上传文件" in response.results[0].error
     assert "暂不支持" in response.results[1].error
+
+
+def test_knowledge_ingest_files_endpoint_ingests_uploaded_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.api.knowledge.get_current_user_id", lambda request: "user-1")
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("Project facts", encoding="utf-8")
+    stored = StoredDocument("file-1", "user-1", "notes.txt", "text/plain", 13, file_path, "upload")
+
+    class FakeStorage:
+        def get_file(self, user_id, file_id):
+            return stored
+
+    class FakeRepository:
+        def add_document(self, **kwargs):
+            return type("Doc", (), {"id": "doc-1", "title": kwargs["title"]})()
+
+    app = FastAPI()
+    app.state.document_storage = FakeStorage()
+    app.state.document_conversion_service = None
+    app.state.knowledge_repository = FakeRepository()
+    app.include_router(knowledge_router)
+
+    response = TestClient(app).post(
+        "/knowledge/ingest-files",
+        json={"file_ids": ["file-1"], "instruction": "解析到知识库"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["document_id"] == "doc-1"
